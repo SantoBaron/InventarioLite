@@ -34,12 +34,14 @@ function uuid() {
 }
 
 function setMsg(text = "", kind = "") {
+  if (!el.msg) return;
   el.msg.textContent = text;
   el.msg.className = "msg " + (kind || "");
 }
 
 function setState(s) {
   appState = s;
+  if (!el.stateText) return;
   if (s === STATE.WAIT_LOC) el.stateText.textContent = "Esperando UBICACIÓN";
   if (s === STATE.WAIT_ITEMS) el.stateText.textContent = "Escaneando ARTÍCULOS";
   if (s === STATE.FINISHED) el.stateText.textContent = "FIN DE INVENTARIO";
@@ -57,7 +59,17 @@ function makeKey(ubicacion, ref, lote, sublote) {
   return `${u}|${r}|${l}|${sl}`;
 }
 
+function escapeHtml(s) {
+  return String(s ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
 function renderTable(lines) {
+  if (!el.tbody) return;
   el.tbody.innerHTML = "";
   for (const l of lines) {
     const tr = document.createElement("tr");
@@ -70,25 +82,16 @@ function renderTable(lines) {
     `;
     el.tbody.appendChild(tr);
   }
-  el.countText.textContent = String(lines.length);
-}
-
-function escapeHtml(s) {
-  return String(s ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
+  if (el.countText) el.countText.textContent = String(lines.length);
 }
 
 async function refresh() {
+  if (!db) return;
   const lines = await getAllLines(db);
   renderTable(lines);
 }
 
 function focusScanner() {
-  // Mantener por compatibilidad (algunos lectores “necesitan” un input)
   el.scanInput?.focus?.({ preventScroll: true });
 }
 
@@ -108,7 +111,7 @@ async function registerLocation(locRaw) {
     return;
   }
   currentLoc = loc;
-  el.locText.textContent = currentLoc;
+  if (el.locText) el.locText.textContent = currentLoc;
   setState(STATE.WAIT_ITEMS);
   setMsg(`Ubicación fijada: ${currentLoc}. Escanea artículos…`, "ok");
 }
@@ -118,14 +121,8 @@ async function registerItem(scanRaw) {
   if (!raw) return;
 
   const cmd = parseCommand(raw);
-  if (cmd?.cmd === "LOC") {
-    await registerLocation(cmd.loc);
-    return;
-  }
-  if (cmd?.cmd === "FIN") {
-    await finishInventory();
-    return;
-  }
+  if (cmd?.cmd === "LOC") return registerLocation(cmd.loc);
+  if (cmd?.cmd === "FIN") return finishInventory();
 
   if (!currentLoc) {
     setMsg("No hay ubicación activa. Escanea ubicación primero.", "err");
@@ -135,7 +132,16 @@ async function registerItem(scanRaw) {
 
   let ref, lote, sublote;
 
-  const gs1 = parseGs1(raw);
+  // ✅ Si parseGs1 falla por cualquier motivo, NO paramos la app
+  let gs1 = null;
+  try {
+    gs1 = parseGs1(raw);
+  } catch (e) {
+    console.error(e);
+    setMsg(`ERROR parseGs1: ${e?.message || e}`, "err");
+    gs1 = null;
+  }
+
   if (gs1) {
     ref = gs1.ref;
     lote = gs1.lote;
@@ -149,13 +155,9 @@ async function registerItem(scanRaw) {
   const key = makeKey(currentLoc, ref, lote, sublote);
   const existing = await findByKey(db, key);
 
-  // Si hay sublote: no permitimos duplicados
   if (sublote) {
     if (existing.length > 0) {
-      setMsg(
-        `DUPLICADO (con sublote) rechazado: ${ref} / ${lote ?? "-"} / ${sublote}`,
-        "err"
-      );
+      setMsg(`DUPLICADO (con sublote) rechazado: ${ref} / ${lote ?? "-"} / ${sublote}`, "err");
       return;
     }
     const line = {
@@ -174,7 +176,6 @@ async function registerItem(scanRaw) {
     return;
   }
 
-  // Si NO hay sublote: agregamos cantidad sobre la misma key
   if (existing.length > 0) {
     const line = existing[0];
     line.cantidad += 1;
@@ -203,22 +204,15 @@ async function registerItem(scanRaw) {
 async function finishInventory() {
   setState(STATE.FINISHED);
   currentLoc = null;
-  el.locText.textContent = "—";
+  if (el.locText) el.locText.textContent = "—";
   setMsg("Inventario finalizado. Puedes exportar a Excel.", "warn");
 }
 
 function stripDemoPrefix(raw) {
   let s = (raw ?? "").trim();
   const up = s.toUpperCase();
-
-  // Si llega DEMO solo, lo descartamos
   if (up === "DEMO") return "";
-
-  // Si llega como prefijo, lo quitamos
-  if (up.startsWith("DEMO")) {
-    s = s.slice(4).trim();
-  }
-
+  if (up.startsWith("DEMO")) s = s.slice(4).trim();
   return s;
 }
 
@@ -226,20 +220,16 @@ function handleScan(raw) {
   raw = stripDemoPrefix(raw);
   if (!raw) return;
 
-  el.lastText.textContent = raw;
+  if (el.lastText) el.lastText.textContent = raw;
 
   const cmd = parseCommand(raw);
   if (cmd?.cmd === "FIN") return finishInventory();
 
-  // Si estamos esperando ubicación, cualquier lectura es una ubicación
-  if (appState === STATE.WAIT_LOC) {
-    return registerLocation(raw);
-  }
+  // ✅ Ubicación
+  if (appState === STATE.WAIT_LOC) return registerLocation(raw);
 
-  // Si estamos en ARTÍCULOS, procesamos como artículo (sin filtrar contenido aquí)
-  if (appState === STATE.WAIT_ITEMS) {
-    return registerItem(raw);
-  }
+  // ✅ Artículos
+  if (appState === STATE.WAIT_ITEMS) return registerItem(raw);
 }
 
 async function undoLast() {
@@ -267,18 +257,13 @@ async function doReset() {
   await clearAll(db);
   currentLoc = null;
   lastInsertedId = null;
-  el.locText.textContent = "—";
-  el.lastText.textContent = "—";
+  if (el.locText) el.locText.textContent = "—";
+  if (el.lastText) el.lastText.textContent = "—";
   setState(STATE.WAIT_LOC);
   setMsg("Base limpiada. Escanea UBICACIÓN para empezar.", "warn");
   await refresh();
 }
 
-/**
- * Captura para lectores tipo “keyboard wedge”:
- * - Acumula teclas
- * - Flushea SOLO con Enter/Tab
- */
 function hookScannerInput() {
   let buffer = "";
 
@@ -289,7 +274,10 @@ function hookScannerInput() {
 
     Promise.resolve(handleScan(value))
       .then(refresh)
-      .catch(console.error);
+      .catch((e) => {
+        console.error(e);
+        setMsg(`ERROR: ${e?.message || e}`, "err");
+      });
 
     focusScanner();
   }
@@ -308,31 +296,36 @@ function hookScannerInput() {
       return;
     }
 
-    if (e.key.length === 1) {
-      buffer += e.key;
-    }
+    if (e.key.length === 1) buffer += e.key;
   });
 
   document.addEventListener("click", () => focusScanner());
   window.addEventListener("focus", () => focusScanner());
 }
 
+function safeOn(elm, evt, fn) {
+  if (!elm) return;
+  elm.addEventListener(evt, fn);
+}
+
 async function main() {
+  // ✅ Captura errores globales y los muestra
+  window.addEventListener("error", (e) => {
+    const msg = e?.error?.message || e?.message || String(e);
+    console.error(e);
+    setMsg(`ERROR JS: ${msg}`, "err");
+  });
+  window.addEventListener("unhandledrejection", (e) => {
+    console.error(e);
+    setMsg(`PROMISE ERROR: ${e?.reason?.message || e?.reason || e}`, "err");
+  });
+
   db = await openDb();
   hookScannerInput();
 
-  el.btnUndo.addEventListener("click", async () => {
-    await undoLast();
-    focusScanner();
-  });
-  el.btnExport.addEventListener("click", async () => {
-    await doExport();
-    focusScanner();
-  });
-  el.btnReset.addEventListener("click", async () => {
-    await doReset();
-    focusScanner();
-  });
+  safeOn(el.btnUndo, "click", async () => { await undoLast(); focusScanner(); });
+  safeOn(el.btnExport, "click", async () => { await doExport(); focusScanner(); });
+  safeOn(el.btnReset, "click", async () => { await doReset(); focusScanner(); });
 
   setState(STATE.WAIT_LOC);
   setMsg("Listo. Escanea una UBICACIÓN.", "ok");
