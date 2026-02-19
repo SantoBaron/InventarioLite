@@ -609,6 +609,19 @@ function hookScannerInput() {
   let buffer = "";
   let timer = null;
 
+  function shouldIgnoreScannerCapture(evtTarget) {
+    if (el.manualDialog?.open) return true;
+
+    const active = evtTarget || document.activeElement;
+    if (!active) return false;
+
+    if (active.closest?.("dialog[open]")) return true;
+    if (active.isContentEditable) return true;
+
+    const tag = active.tagName?.toUpperCase?.() || "";
+    return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+  }
+
   function scheduleFlushByState() {
     if (appState === STATE.FINISHED) return;
 
@@ -639,6 +652,7 @@ function hookScannerInput() {
 
   document.addEventListener("keydown", (e) => {
     if (e.ctrlKey || e.altKey || e.metaKey) return;
+    if (shouldIgnoreScannerCapture(e.target)) return;
 
     if (e.key === "Enter" || e.key === "Tab") {
       e.preventDefault();
@@ -659,6 +673,7 @@ function hookScannerInput() {
   });
 
   safeOn(el.scanInput, "input", () => {
+    if (shouldIgnoreScannerCapture(el.scanInput)) return;
     const v = el.scanInput?.value ?? "";
     if (!v) return;
     buffer = v;
@@ -666,6 +681,7 @@ function hookScannerInput() {
   });
 
   safeOn(el.scanInput, "paste", () => {
+    if (shouldIgnoreScannerCapture(el.scanInput)) return;
     const v = el.scanInput?.value ?? "";
     if (!v) return;
     buffer = v;
