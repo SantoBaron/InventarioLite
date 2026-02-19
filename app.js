@@ -28,7 +28,9 @@ let currentLoc = null;
 let lastInsertedId = null;
 
 function uuid() {
-  return crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + "_" + Math.random().toString(16).slice(2);
+  return crypto.randomUUID
+    ? crypto.randomUUID()
+    : String(Date.now()) + "_" + Math.random().toString(16).slice(2);
 }
 
 function setMsg(text = "", kind = "") {
@@ -115,12 +117,6 @@ async function registerItem(scanRaw) {
   const raw = norm(scanRaw);
   if (!raw) return;
 
-  // Descarta ruido residual
-  if (raw.toUpperCase() === "DEMO") {
-    setMsg("Lectura descartada: DEMO", "warn");
-    return;
-  }
-
   const cmd = parseCommand(raw);
   if (cmd?.cmd === "LOC") {
     await registerLocation(cmd.loc);
@@ -137,18 +133,14 @@ async function registerItem(scanRaw) {
     return;
   }
 
-  // Construir el registro
   let ref, lote, sublote;
 
   const gs1 = parseGs1(raw);
-
   if (gs1) {
-    // IMPORTANTE: parseGs1 devuelve { ref, lote, sublote }
     ref = gs1.ref;
     lote = gs1.lote;
     sublote = gs1.sublote;
   } else {
-    // Código interno simple
     ref = raw;
     lote = null;
     sublote = null;
@@ -160,7 +152,10 @@ async function registerItem(scanRaw) {
   // Si hay sublote: no permitimos duplicados
   if (sublote) {
     if (existing.length > 0) {
-      setMsg(`DUPLICADO (con sublote) rechazado: ${ref} / ${lote ?? "-"} / ${sublote}`, "err");
+      setMsg(
+        `DUPLICADO (con sublote) rechazado: ${ref} / ${lote ?? "-"} / ${sublote}`,
+        "err"
+      );
       return;
     }
     const line = {
@@ -219,50 +214,32 @@ function stripDemoPrefix(raw) {
   // Si llega DEMO solo, lo descartamos
   if (up === "DEMO") return "";
 
-  // Si llega como prefijo (confirmado por tu PDA/pistola), lo quitamos
+  // Si llega como prefijo, lo quitamos
   if (up.startsWith("DEMO")) {
     s = s.slice(4).trim();
   }
+
   return s;
 }
 
 function handleScan(raw) {
-  raw = (raw ?? "").trim();
-
+  raw = stripDemoPrefix(raw);
   if (!raw) return;
-
-  const upper = raw.toUpperCase();
-
-  // 1️⃣ Ignorar lectura DEMO sola
-  if (upper === "DEMO") {
-    return;
-  }
-
-  // 2️⃣ Si empieza por DEMO, eliminarlo
-  if (upper.startsWith("DEMO")) {
-    raw = raw.slice(4).trim();
-  }
-
-  // 3️⃣ Si después de limpiar no hay contenido válido, salir
-  if (!raw) return;
-
-  // 4️⃣ Si no parece artículo (no contiene 02 o guion típico), ignorar
-  if (!raw.includes("02") && !raw.includes("-")) {
-    return;
-  }
 
   el.lastText.textContent = raw;
 
   const cmd = parseCommand(raw);
   if (cmd?.cmd === "FIN") return finishInventory();
 
-  if (appState === STATE.FINISHED) {
-    setState(STATE.WAIT_LOC);
-    setMsg("Se reanuda captura: escanea UBICACIÓN.", "warn");
+  // Si estamos esperando ubicación, cualquier lectura es una ubicación
+  if (appState === STATE.WAIT_LOC) {
+    return registerLocation(raw);
   }
 
-  if (appState === STATE.WAIT_LOC) return registerLocation(raw);
-  if (appState === STATE.WAIT_ITEMS) return registerItem(raw);
+  // Si estamos en ARTÍCULOS, procesamos como artículo (sin filtrar contenido aquí)
+  if (appState === STATE.WAIT_ITEMS) {
+    return registerItem(raw);
+  }
 }
 
 async function undoLast() {
@@ -298,9 +275,9 @@ async function doReset() {
 }
 
 /**
- * Captura robusta para lectores tipo “keyboard wedge”:
+ * Captura para lectores tipo “keyboard wedge”:
  * - Acumula teclas
- * - Flushea SOLO con Enter/Tab (evita concatenaciones por timeout)
+ * - Flushea SOLO con Enter/Tab
  */
 function hookScannerInput() {
   let buffer = "";
@@ -336,7 +313,6 @@ function hookScannerInput() {
     }
   });
 
-  // Mantener “foco de pestaña”
   document.addEventListener("click", () => focusScanner());
   window.addEventListener("focus", () => focusScanner());
 }
@@ -368,6 +344,3 @@ main().catch((err) => {
   console.error(err);
   setMsg("Error inicializando la app: " + (err?.message || err), "err");
 });
-
-
-
