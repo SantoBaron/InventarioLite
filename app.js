@@ -18,6 +18,18 @@ const el = {
   msg: document.getElementById("msg"),
   tbody: document.getElementById("tbody"),
   btnUndo: document.getElementById("btnUndo"),
+  btnNextLoc: document.getElementById("btnNextLoc"),
+  btnNextLocCard: document.getElementById("btnNextLocCard"),
+  btnFinish: document.getElementById("btnFinish"),
+  btnFinishCard: document.getElementById("btnFinishCard"),
+  btnManual: document.getElementById("btnManual"),
+  btnManualCard: document.getElementById("btnManualCard"),
+  manualDialog: document.getElementById("manualDialog"),
+  manualForm: document.getElementById("manualForm"),
+  manualRef: document.getElementById("manualRef"),
+  manualLote: document.getElementById("manualLote"),
+  manualSublote: document.getElementById("manualSublote"),
+  btnManualCancel: document.getElementById("btnManualCancel"),
   btnExport: document.getElementById("btnExport"),
   btnExportCsv: document.getElementById("btnExportCsv"),
   btnReset: document.getElementById("btnReset"),
@@ -37,6 +49,10 @@ function uuid() {
 function safeOn(node, evt, fn) {
   if (!node) return;
   node.addEventListener(evt, fn);
+}
+
+function safeOnMany(nodes, evt, fn) {
+  for (const n of nodes) safeOn(n, evt, fn);
 }
 
 function setMsg(text = "", kind = "") {
@@ -71,6 +87,10 @@ function renderTable(lines) {
   el.tbody.innerHTML = "";
   for (const l of lines) {
     const tr = document.createElement("tr");
+    if (l.manual) {
+      tr.classList.add("manual-row");
+      tr.title = "Registro introducido manualmente";
+    }
     tr.innerHTML = `
       <td class="mono">${escapeHtml(l.ubicacion)}</td>
       <td class="mono">${escapeHtml(l.ref)}</td>
@@ -128,6 +148,10 @@ async function registerLocation(locRaw) {
 }
 
 async function finishInventory() {
+  if (appState === STATE.FINISHED) {
+    setMsg("El inventario ya está finalizado.", "warn");
+    return;
+  }
   setState(STATE.FINISHED);
   currentLoc = null;
   if (el.locText) el.locText.textContent = "—";
@@ -135,10 +159,73 @@ async function finishInventory() {
 }
 
 async function closeCurrentLocation() {
+  if (!currentLoc) {
+    setMsg("No hay ubicación activa para cerrar.", "warn");
+    return;
+  }
   currentLoc = null;
   if (el.locText) el.locText.textContent = "—";
   setState(STATE.WAIT_LOC);
   setMsg("Ubicación cerrada. Escanea la siguiente ubicación.", "warn");
+}
+
+async function storeItem({ ref, lote, sublote, manual = false }) {
+  if (!currentLoc) {
+    setMsg("No hay ubicación activa. Escanea ubicación primero.", "err");
+    setState(STATE.WAIT_LOC);
+    return;
+  }
+
+  const key = makeKey(currentLoc, ref, lote, sublote);
+  const existing = await findByKey(db, key);
+
+  if (sublote) {
+    if (existing.length > 0) {
+      setMsg(`DUPLICADO (con sublote) rechazado: ${ref} / ${lote ?? "-"} / ${sublote}`, "err");
+      return;
+    }
+    const line = {
+      id: uuid(),
+      key,
+      ubicacion: currentLoc,
+      ref,
+      lote: lote ?? null,
+      sublote: sublote ?? null,
+      cantidad: 1,
+      manual,
+      createdAt: Date.now(),
+    };
+    await putLine(db, line);
+    lastInsertedId = line.id;
+    setMsg(`OK: ${ref} (lote ${lote ?? "-"}) (sublote ${sublote})${manual ? " [manual]" : ""}`, "ok");
+    return;
+  }
+
+  if (existing.length > 0) {
+    const line = existing[0];
+    line.cantidad += 1;
+    line.createdAt = Date.now();
+    line.manual = Boolean(line.manual || manual);
+    await putLine(db, line);
+    lastInsertedId = line.id;
+    setMsg(`OK (agregado): ${ref} (lote ${lote ?? "-"}) → cantidad ${line.cantidad}${manual ? " [manual]" : ""}`, "ok");
+    return;
+  }
+
+  const line = {
+    id: uuid(),
+    key,
+    ubicacion: currentLoc,
+    ref,
+    lote: lote ?? null,
+    sublote: null,
+    cantidad: 1,
+    manual,
+    createdAt: Date.now(),
+  };
+  await putLine(db, line);
+  lastInsertedId = line.id;
+  setMsg(`OK: ${ref} (lote ${lote ?? "-"})${manual ? " [manual]" : ""}`, "ok");
 }
 
 async function registerItem(scanRaw) {
@@ -171,55 +258,50 @@ async function registerItem(scanRaw) {
     sublote = null;
   }
 
-  const key = makeKey(currentLoc, ref, lote, sublote);
-  const existing = await findByKey(db, key);
+  return storeItem({ ref, lote, sublote, manual: false });
+}
 
-  // Si hay sublote: no permitimos duplicados
-  if (sublote) {
-    if (existing.length > 0) {
-      setMsg(`DUPLICADO (con sublote) rechazado: ${ref} / ${lote ?? "-"} / ${sublote}`, "err");
-      return;
-    }
-    const line = {
-      id: uuid(),
-      key,
-      ubicacion: currentLoc,
-      ref,
-      lote: lote ?? null,
-      sublote: sublote ?? null,
-      cantidad: 1,
-      createdAt: Date.now(),
-    };
-    await putLine(db, line);
-    lastInsertedId = line.id;
-    setMsg(`OK: ${ref} (lote ${lote ?? "-"}) (sublote ${sublote})`, "ok");
+function openManualDialog() {
+  if (!currentLoc) {
+    setMsg("Primero debes fijar una ubicación para el alta manual.", "warn");
     return;
   }
 
-  // Sin sublote: agregamos cantidad
-  if (existing.length > 0) {
-    const line = existing[0];
-    line.cantidad += 1;
-    line.createdAt = Date.now();
-    await putLine(db, line);
-    lastInsertedId = line.id;
-    setMsg(`OK (agregado): ${ref} (lote ${lote ?? "-"}) → cantidad ${line.cantidad}`, "ok");
+  if (!el.manualDialog?.showModal) {
+    const ref = norm(window.prompt("Referencia:", ""));
+    if (!ref) return;
+    const lote = norm(window.prompt("Lote (opcional):", "")) || null;
+    const sublote = norm(window.prompt("Sublote (opcional):", "")) || null;
+    storeItem({ ref, lote, sublote, manual: true })
+      .then(refresh)
+      .catch((e) => {
+        console.error(e);
+        setMsg("ERROR: " + (e?.message || e), "err");
+      });
     return;
   }
 
-  const line = {
-    id: uuid(),
-    key,
-    ubicacion: currentLoc,
-    ref,
-    lote: lote ?? null,
-    sublote: null,
-    cantidad: 1,
-    createdAt: Date.now(),
-  };
-  await putLine(db, line);
-  lastInsertedId = line.id;
-  setMsg(`OK: ${ref} (lote ${lote ?? "-"})`, "ok");
+  el.manualRef.value = "";
+  el.manualLote.value = "";
+  el.manualSublote.value = "";
+  el.manualDialog?.showModal?.();
+  el.manualRef?.focus?.();
+}
+
+async function submitManualForm(evt) {
+  evt.preventDefault();
+  const ref = norm(el.manualRef?.value);
+  const lote = norm(el.manualLote?.value) || null;
+  const sublote = norm(el.manualSublote?.value) || null;
+
+  if (!ref) {
+    setMsg("Referencia obligatoria en alta manual.", "err");
+    return;
+  }
+
+  await storeItem({ ref, lote, sublote, manual: true });
+  el.manualDialog?.close?.();
+  await refresh();
 }
 
 function handleScan(raw) {
@@ -302,6 +384,7 @@ function hookScannerInput() {
   function flush() {
     const value = buffer.trim();
     buffer = "";
+    if (el.scanInput) el.scanInput.value = "";
     clearTimeout(timer);
     timer = null;
 
@@ -337,7 +420,24 @@ function hookScannerInput() {
     }
   });
 
+  // Algunos escáneres actúan como "teclado wedge" y escriben en el input
+  // sin exponer bien todos los keydown. Este listener cubre ese caso.
+  safeOn(el.scanInput, "input", () => {
+    const v = el.scanInput?.value ?? "";
+    if (!v) return;
+    buffer = v;
+    scheduleFlushByState();
+  });
+
+  safeOn(el.scanInput, "paste", () => {
+    const v = el.scanInput?.value ?? "";
+    if (!v) return;
+    buffer = v;
+    scheduleFlushByState();
+  });
+
   // Compatibilidad (no crítico)
+  el.scanInput?.focus?.({ preventScroll: true });
   safeOn(document, "click", () => el.scanInput?.focus?.({ preventScroll: true }));
   safeOn(window, "focus", () => el.scanInput?.focus?.({ preventScroll: true }));
 }
@@ -358,6 +458,37 @@ async function main() {
   hookScannerInput();
 
   safeOn(el.btnUndo, "click", async () => { await undoLast(); });
+
+  const onNextLoc = async () => {
+    await closeCurrentLocation();
+    await refresh();
+  };
+
+  const onFinish = async () => {
+    await finishInventory();
+    await refresh();
+  };
+
+  safeOnMany([el.btnNextLoc, el.btnNextLocCard], "click", () => {
+    onNextLoc().catch((e) => {
+      console.error(e);
+      setMsg("ERROR: " + (e?.message || e), "err");
+    });
+  });
+  safeOnMany([el.btnFinish, el.btnFinishCard], "click", () => {
+    onFinish().catch((e) => {
+      console.error(e);
+      setMsg("ERROR: " + (e?.message || e), "err");
+    });
+  });
+  safeOnMany([el.btnManual, el.btnManualCard], "click", () => openManualDialog());
+  safeOn(el.manualForm, "submit", (evt) => {
+    submitManualForm(evt).catch((e) => {
+      console.error(e);
+      setMsg("ERROR: " + (e?.message || e), "err");
+    });
+  });
+  safeOn(el.btnManualCancel, "click", () => el.manualDialog?.close?.());
   safeOn(el.btnExport, "click", async () => { await doExport(); });
   safeOn(el.btnExportCsv, "click", async () => { await doExportCsv(); });
   safeOn(el.btnReset, "click", async () => { await doReset(); });

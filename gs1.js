@@ -11,8 +11,8 @@ function normalize(input) {
   // Quitar DEMO si viene pegado (no afecta al etiquetado; solo para parsear)
   if (s.toUpperCase().startsWith("DEMO")) s = s.slice(4).trim();
 
-  // Quitar AIM si aparece
-  if (s.startsWith("]C1")) s = s.slice(3);
+  // Quitar AIM si aparece (]C1, ]d2, etc.)
+  if (/^\][A-Za-z]\d/.test(s)) s = s.slice(3);
 
   // Mojibake típico
   s = s.replaceAll("ÃŠ", "Ê");
@@ -30,6 +30,9 @@ function normalize(input) {
 export function parseGs1(rawInput) {
   const input = normalize(rawInput);
   if (!input) return null;
+
+  // Tolerancia: algunas lecturas llegan sin el terminador AI 21.
+  const maybeWithout21 = input.endsWith("21") ? input : `${input}21`;
 
   // Caso A: con separadores Ê
   if (input.includes("Ê")) {
@@ -63,14 +66,29 @@ export function parseGs1(rawInput) {
 
   // Caso B: lectura concatenada sin separadores (sin Enter/GS)
   // Ejemplo: 02COMPO-007451019-02600404121
-  const flat = input.replaceAll(" ", "");
+  const flat = maybeWithout21.replaceAll(" ", "");
   if (flat.startsWith("02") && flat.endsWith("21") && flat.length > 4) {
     const payload = flat.slice(2, -2);
 
     let work = payload;
     let sublote = null;
 
-    const idx04 = work.lastIndexOf("04");
+    const idx04Candidates = [];
+    for (let i = 0; i < work.length - 1; i += 1) {
+      if (work[i] === "0" && work[i + 1] === "4") idx04Candidates.push(i);
+    }
+
+    let idx04 = -1;
+    for (let i = idx04Candidates.length - 1; i >= 0; i -= 1) {
+      const pos = idx04Candidates[i];
+      const maybe = work.slice(pos + 2).trim();
+      if (maybe.length >= 3) {
+        idx04 = pos;
+        break;
+      }
+    }
+    if (idx04 < 0 && idx04Candidates.length) idx04 = idx04Candidates[idx04Candidates.length - 1];
+
     if (idx04 >= 0) {
       const maybeSublote = work.slice(idx04 + 2).trim();
       if (maybeSublote) {
