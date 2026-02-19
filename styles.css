@@ -68,3 +68,23 @@ tbody tr:hover td { background: #111a2d; }
   border-radius: 8px;
 }
 .manual-form menu { margin: 6px 0 0; padding: 0; display: flex; justify-content: flex-end; gap: 8px; }
+
+@media (max-width: 980px) {
+  .top {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .actions {
+    width: 100%;
+  }
+
+  .actions > button,
+  .quick-actions > button {
+    flex: 1 1 180px;
+  }
+
+  .row {
+    grid-template-columns: 1fr;
+  }
+}

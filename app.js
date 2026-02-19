@@ -51,6 +51,10 @@ function safeOn(node, evt, fn) {
   node.addEventListener(evt, fn);
 }
 
+function safeOnMany(nodes, evt, fn) {
+  for (const n of nodes) safeOn(n, evt, fn);
+}
+
 function setMsg(text = "", kind = "") {
   if (!el.msg) return;
   el.msg.textContent = text;
@@ -144,6 +148,10 @@ async function registerLocation(locRaw) {
 }
 
 async function finishInventory() {
+  if (appState === STATE.FINISHED) {
+    setMsg("El inventario ya está finalizado.", "warn");
+    return;
+  }
   setState(STATE.FINISHED);
   currentLoc = null;
   if (el.locText) el.locText.textContent = "—";
@@ -151,6 +159,10 @@ async function finishInventory() {
 }
 
 async function closeCurrentLocation() {
+  if (!currentLoc) {
+    setMsg("No hay ubicación activa para cerrar.", "warn");
+    return;
+  }
   currentLoc = null;
   if (el.locText) el.locText.textContent = "—";
   setState(STATE.WAIT_LOC);
@@ -254,6 +266,21 @@ function openManualDialog() {
     setMsg("Primero debes fijar una ubicación para el alta manual.", "warn");
     return;
   }
+
+  if (!el.manualDialog?.showModal) {
+    const ref = norm(window.prompt("Referencia:", ""));
+    if (!ref) return;
+    const lote = norm(window.prompt("Lote (opcional):", "")) || null;
+    const sublote = norm(window.prompt("Sublote (opcional):", "")) || null;
+    storeItem({ ref, lote, sublote, manual: true })
+      .then(refresh)
+      .catch((e) => {
+        console.error(e);
+        setMsg("ERROR: " + (e?.message || e), "err");
+      });
+    return;
+  }
+
   el.manualRef.value = "";
   el.manualLote.value = "";
   el.manualSublote.value = "";
@@ -431,24 +458,30 @@ async function main() {
   hookScannerInput();
 
   safeOn(el.btnUndo, "click", async () => { await undoLast(); });
-  safeOn(el.btnNextLoc, "click", async () => {
+
+  const onNextLoc = async () => {
     await closeCurrentLocation();
     await refresh();
-  });
-  safeOn(el.btnNextLocCard, "click", async () => {
-    await closeCurrentLocation();
-    await refresh();
-  });
-  safeOn(el.btnFinish, "click", async () => {
+  };
+
+  const onFinish = async () => {
     await finishInventory();
     await refresh();
+  };
+
+  safeOnMany([el.btnNextLoc, el.btnNextLocCard], "click", () => {
+    onNextLoc().catch((e) => {
+      console.error(e);
+      setMsg("ERROR: " + (e?.message || e), "err");
+    });
   });
-  safeOn(el.btnFinishCard, "click", async () => {
-    await finishInventory();
-    await refresh();
+  safeOnMany([el.btnFinish, el.btnFinishCard], "click", () => {
+    onFinish().catch((e) => {
+      console.error(e);
+      setMsg("ERROR: " + (e?.message || e), "err");
+    });
   });
-  safeOn(el.btnManual, "click", () => openManualDialog());
-  safeOn(el.btnManualCard, "click", () => openManualDialog());
+  safeOnMany([el.btnManual, el.btnManualCard], "click", () => openManualDialog());
   safeOn(el.manualForm, "submit", (evt) => {
     submitManualForm(evt).catch((e) => {
       console.error(e);
