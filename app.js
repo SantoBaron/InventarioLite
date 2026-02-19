@@ -265,10 +265,25 @@ async function doReset() {
 // --- Captura global de teclado (NO depende de foco) ---
 function hookScannerInput() {
   let buffer = "";
+  let timer = null;
+
+  function scheduleFlushIfWaitingLocation() {
+    // Solo hacemos timeout-flush en modo UBICACIÓN
+    if (appState !== STATE.WAIT_LOC) return;
+
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      // Si el lector no manda Enter para ubicación, cerramos lectura por tiempo
+      if (buffer.trim()) flush();
+    }, 250); // 250ms suele ser seguro para lectura completa de ubicación
+  }
 
   function flush() {
     const value = buffer.trim();
     buffer = "";
+    clearTimeout(timer);
+    timer = null;
+
     if (!value) return;
 
     Promise.resolve(handleScan(value))
@@ -282,6 +297,7 @@ function hookScannerInput() {
   document.addEventListener("keydown", (e) => {
     if (e.ctrlKey || e.altKey || e.metaKey) return;
 
+    // Terminadores clásicos del escáner
     if (e.key === "Enter" || e.key === "Tab") {
       e.preventDefault();
       flush();
@@ -290,17 +306,20 @@ function hookScannerInput() {
 
     if (e.key === "Backspace") {
       buffer = buffer.slice(0, -1);
+      scheduleFlushIfWaitingLocation();
       return;
     }
 
-    if (e.key.length === 1) buffer += e.key;
+    if (e.key.length === 1) {
+      buffer += e.key;
+      scheduleFlushIfWaitingLocation();
+    }
   });
 
-  // Mantén compatibilidad con lectores que “exigen” input
+  // Compatibilidad (no crítico)
   safeOn(document, "click", () => el.scanInput?.focus?.({ preventScroll: true }));
   safeOn(window, "focus", () => el.scanInput?.focus?.({ preventScroll: true }));
 }
-
 async function main() {
   // Reporta errores sin matar la app
   window.addEventListener("error", (e) => {
@@ -330,3 +349,4 @@ main().catch((err) => {
   console.error(err);
   setMsg("Error inicializando la app: " + (err?.message || err), "err");
 });
+
