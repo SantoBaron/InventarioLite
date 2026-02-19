@@ -146,9 +146,9 @@ async function registerItem(scanRaw) {
   let ref, lote, sublote;
 
   if (gs1) {
-    ref = gs1.gtin;
-    lote = gs1.lote;
-    sublote = gs1.sublote;
+      ref = gs1.ref;
+  lote = gs1.lote;
+  sublote = gs1.sublote;
   } else {
     // Código interno simple
     ref = raw;
@@ -338,4 +338,5 @@ main().catch(err => {
   console.error(err);
   setMsg("Error inicializando la app: " + (err?.message || err), "err");
 });
+
 
