@@ -615,6 +615,7 @@ function hookScannerInput() {
     const active = evtTarget || document.activeElement;
     if (!active) return false;
 
+    if (active === el.scanInput) return false;
     if (active.closest?.("dialog[open]")) return true;
     if (active.isContentEditable) return true;
 
