@@ -1,29 +1,34 @@
 function normalize(input) {
   if (!input) return "";
-
   let s = input.trim();
-
-  // Quitar prefijo AIM
   if (s.startsWith("]C1")) s = s.slice(3);
 
-  // En vuestro entorno el separador es Ê
+  // Separador real en vuestro lector
   s = s.replaceAll("Ê", "|");
 
-  // Eliminar caracteres de control
+  // Quitar controles
   s = s.replace(/[\x00-\x1F]/g, "");
+
+  // Limpiar separadores repetidos
+  s = s.replace(/\|+/g, "|");
 
   return s;
 }
 
+function padSublote(v) {
+  if (!v) return null;
+  const t = v.trim();
+
+  // Si es numérico, lo normalizamos a 5 dígitos (00001, 00042, etc.)
+  if (/^\d+$/.test(t)) return t.padStart(5, "0");
+
+  return t; // si no es numérico, no tocamos
+}
+
 export function parseGs1(rawInput) {
-  if (!rawInput) return null;
-
   const input = normalize(rawInput);
+  if (!input) return null;
 
-  // Si no contiene 02 o 10 no lo tratamos como GS1 interno
-  if (!input.includes("02") && !input.includes("|02")) return null;
-
-  // Segmentación por |
   const segments = input.split("|").filter(Boolean);
 
   let ref = null;
@@ -31,22 +36,18 @@ export function parseGs1(rawInput) {
   let sublote = null;
 
   for (const seg of segments) {
-    if (seg.startsWith("02")) {
-      ref = seg.slice(2);
-    } else if (seg.startsWith("10")) {
-      lote = seg.slice(2);
-    } else if (seg.startsWith("04")) {
-      sublote = seg.slice(2);
-    } else if (seg.startsWith("21")) {
-      // normalmente vacío
-      continue;
+    if (seg.startsWith("02")) ref = seg.slice(2).trim();
+    else if (seg.startsWith("10")) lote = seg.slice(2).trim();
+    else if (seg.startsWith("04")) sublote = padSublote(seg.slice(2));
+    else if (seg.startsWith("21")) {
+      // normalmente vacío en vuestro caso: ignoramos
     }
   }
 
   if (!ref) return null;
 
   return {
-    ref: ref || null,
+    ref,
     lote: lote || null,
     sublote: sublote || null,
     raw: rawInput
