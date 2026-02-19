@@ -25,6 +25,13 @@ const el = {
   btnFinishCard: document.getElementById("btnFinishCard"),
   btnManual: document.getElementById("btnManual"),
   btnManualCard: document.getElementById("btnManualCard"),
+  btnMenuNext: document.getElementById("btnMenuNext"),
+  btnMenuFinish: document.getElementById("btnMenuFinish"),
+  btnMenuManual: document.getElementById("btnMenuManual"),
+  btnMenuUndo: document.getElementById("btnMenuUndo"),
+  btnMenuExport: document.getElementById("btnMenuExport"),
+  btnMenuExportCsv: document.getElementById("btnMenuExportCsv"),
+  btnMenuReset: document.getElementById("btnMenuReset"),
   manualDialog: document.getElementById("manualDialog"),
   manualForm: document.getElementById("manualForm"),
   manualRef: document.getElementById("manualRef"),
@@ -61,6 +68,11 @@ function safeOn(node, evt, fn) {
 
 function safeOnMany(nodes, evt, fn) {
   for (const n of nodes) safeOn(n, evt, fn);
+}
+
+function closeDetailsMenuFromEvent(evt) {
+  const details = evt?.target?.closest?.("details");
+  if (details) details.open = false;
 }
 
 function setMsg(text = "", kind = "") {
@@ -120,9 +132,19 @@ function renderTable(lines) {
       <td class="mono">${escapeHtml(l.sublote ?? "")}</td>
       <td class="num mono">${l.cantidad}</td>
       <td class="actions-cell">
-        <button class="mini secondary" data-action="edit" data-id="${escapeHtml(l.id)}">Editar</button>
-        <button class="mini warn" data-action="label" data-id="${escapeHtml(l.id)}">Etiqueta</button>
-        <button class="mini danger" data-action="delete" data-id="${escapeHtml(l.id)}">Borrar</button>
+        <div class="row-actions-desktop">
+          <button class="mini secondary" data-action="edit" data-id="${escapeHtml(l.id)}">Editar</button>
+          <button class="mini warn" data-action="label" data-id="${escapeHtml(l.id)}">Etiqueta</button>
+          <button class="mini danger" data-action="delete" data-id="${escapeHtml(l.id)}">Borrar</button>
+        </div>
+        <details class="row-actions-mobile">
+          <summary class="mini secondary row-actions-trigger" title="Acciones">✏️</summary>
+          <div class="row-actions-pop">
+            <button class="mini secondary" data-action="edit" data-id="${escapeHtml(l.id)}" type="button">Editar</button>
+            <button class="mini warn" data-action="label" data-id="${escapeHtml(l.id)}" type="button">Etiqueta</button>
+            <button class="mini danger" data-action="delete" data-id="${escapeHtml(l.id)}" type="button">Borrar</button>
+          </div>
+        </details>
       </td>
     `;
     el.tbody.appendChild(tr);
@@ -763,6 +785,7 @@ async function main() {
   hookScannerInput();
 
   safeOn(el.btnUndo, "click", async () => { await undoLast(); });
+  safeOn(el.btnMenuUndo, "click", async (evt) => { closeDetailsMenuFromEvent(evt); await undoLast(); });
   const onTogglePdaMode = (evt) => {
     evt?.preventDefault?.();
     evt?.stopPropagation?.();
@@ -782,19 +805,21 @@ async function main() {
     await refresh();
   };
 
-  safeOnMany([el.btnNextLoc, el.btnNextLocCard], "click", () => {
+  safeOnMany([el.btnNextLoc, el.btnNextLocCard, el.btnMenuNext], "click", (evt) => {
+    closeDetailsMenuFromEvent(evt);
     onNextLoc().catch((e) => {
       console.error(e);
       setMsg("ERROR: " + (e?.message || e), "err");
     });
   });
-  safeOnMany([el.btnFinish, el.btnFinishCard], "click", () => {
+  safeOnMany([el.btnFinish, el.btnFinishCard, el.btnMenuFinish], "click", (evt) => {
+    closeDetailsMenuFromEvent(evt);
     onFinish().catch((e) => {
       console.error(e);
       setMsg("ERROR: " + (e?.message || e), "err");
     });
   });
-  safeOnMany([el.btnManual, el.btnManualCard], "click", () => openManualDialogForCreate());
+  safeOnMany([el.btnManual, el.btnManualCard, el.btnMenuManual], "click", (evt) => { closeDetailsMenuFromEvent(evt); openManualDialogForCreate(); });
   safeOn(el.manualForm, "submit", (evt) => {
     submitManualForm(evt).catch((e) => {
       console.error(e);
@@ -810,8 +835,11 @@ async function main() {
     el.scanInput?.focus?.({ preventScroll: true });
   });
   safeOn(el.btnExport, "click", async () => { await doExport(); });
+  safeOn(el.btnMenuExport, "click", async (evt) => { closeDetailsMenuFromEvent(evt); await doExport(); });
   safeOn(el.btnExportCsv, "click", async () => { await doExportCsv(); });
+  safeOn(el.btnMenuExportCsv, "click", async (evt) => { closeDetailsMenuFromEvent(evt); await doExportCsv(); });
   safeOn(el.btnReset, "click", async () => { await doReset(); });
+  safeOn(el.btnMenuReset, "click", async (evt) => { closeDetailsMenuFromEvent(evt); await doReset(); });
   safeOn(el.tbody, "click", (evt) => {
     handleRowAction(evt).catch((e) => {
       console.error(e);

@@ -15,6 +15,8 @@ body.pda-mode tbody tr:hover td { background: #e3f4ff; }
 body.pda-mode button { border-color: #84b9e1; background: #d7edff; color: #113a5d; }
 body.pda-mode button:hover { background: #c8e6ff; }
 body.pda-mode button.secondary { background: #d2ebff; }
+body.pda-mode .mobile-actions-menu > summary { border-color: #84b9e1; background: #d2ebff; color: #113a5d; }
+body.pda-mode .row-actions-pop { border-color: #8fc3ea; background: #eef8ff; }
 body.pda-mode button.secondary.active { border-color: #2f85d8; background: #74beff; color: #073357; }
 body.pda-mode button.danger { border-color: #d68585; background: #ffd8d8; color: #6f1919; }
 body.pda-mode button.warn { border-color: #d1b16d; background: #fff2cc; color: #5f470f; }
@@ -50,6 +52,40 @@ button.mini { padding: 6px 8px; border-radius: 8px; font-size: 12px; }
 .msg.err { color: #ff7b7b; }
 .msg.warn { color: #ffd36a; }
 .quick-actions { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; }
+
+.mobile-actions-menu { display: none; margin-top: 10px; }
+.mobile-actions-menu > summary {
+  list-style: none;
+  cursor: pointer;
+  border: 1px solid #2a3550;
+  background: #101826;
+  color: #e8eefc;
+  padding: 10px 12px;
+  border-radius: 10px;
+  user-select: none;
+}
+.mobile-actions-menu > summary::-webkit-details-marker { display: none; }
+.mobile-actions-list { margin-top: 8px; display: grid; gap: 8px; }
+.mobile-actions-list > button { width: 100%; text-align: left; }
+
+.row-actions-desktop { display: flex; gap: 6px; }
+.row-actions-mobile { display: none; position: relative; }
+.row-actions-trigger { list-style: none; user-select: none; }
+.row-actions-trigger::-webkit-details-marker { display: none; }
+.row-actions-pop {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 4;
+  background: #0f1524;
+  border: 1px solid #22304d;
+  border-radius: 10px;
+  padding: 6px;
+  display: grid;
+  gap: 6px;
+  min-width: 130px;
+}
+
 
 .table { margin-top: 14px; }
 .table-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 10px; }
@@ -129,5 +165,22 @@ tbody tr:hover td { background: #111a2d; }
 
   .actions-cell {
     flex-wrap: wrap;
+  }
+
+  body.pda-mode .actions,
+  body.pda-mode .quick-actions {
+    display: none;
+  }
+
+  body.pda-mode .mobile-actions-menu {
+    display: block;
+  }
+
+  body.pda-mode .row-actions-desktop {
+    display: none;
+  }
+
+  body.pda-mode .row-actions-mobile {
+    display: inline-block;
   }
 }
