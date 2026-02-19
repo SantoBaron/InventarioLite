@@ -1,303 +1,3 @@
-import { openDb, getAllLines, putLine, deleteLine, clearAll, findByKey } from "./db.js";
-import { parseGs1 } from "./gs1.js";
-import { exportToXlsx } from "./export.js";
-
-const STATE = {
-  WAIT_LOC: "WAIT_LOC",
-  WAIT_ITEMS: "WAIT_ITEMS",
-  FINISHED: "FINISHED"
-};
-
-const el = {
-  scanInput: document.getElementById("scanInput"),
-  stateText: document.getElementById("stateText"),
-  locText: document.getElementById("locText"),
-  lastText: document.getElementById("lastText"),
-  countText: document.getElementById("countText"),
-  msg: document.getElementById("msg"),
-  tbody: document.getElementById("tbody"),
-  btnUndo: document.getElementById("btnUndo"),
-  btnExport: document.getElementById("btnExport"),
-  btnReset: document.getElementById("btnReset"),
-};
-
-let db;
-let appState = STATE.WAIT_LOC;
-let currentLoc = null;
-let lastInsertedId = null;
-
-function uuid() {
-  // Suficiente para este caso
-  return crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + "_" + Math.random().toString(16).slice(2);
-}
-
-function setMsg(text = "", kind = "") {
-  el.msg.textContent = text;
-  el.msg.className = "msg " + (kind || "");
-}
-
-function setState(s) {
-  appState = s;
-  if (s === STATE.WAIT_LOC) el.stateText.textContent = "Esperando UBICACIÓN";
-  if (s === STATE.WAIT_ITEMS) el.stateText.textContent = "Escaneando ARTÍCULOS";
-  if (s === STATE.FINISHED) el.stateText.textContent = "FIN DE INVENTARIO";
-}
-
-function norm(s) {
-  return (s ?? "").trim();
-}
-
-function makeKey(ubicacion, ref, lote, sublote) {
-  const u = norm(ubicacion).toUpperCase();
-  const r = norm(ref).toUpperCase();
-  const l = norm(lote || "");
-  const sl = norm(sublote || "");
-  return `${u}|${r}|${l}|${sl}`;
-}
-
-function renderTable(lines) {
-  el.tbody.innerHTML = "";
-  for (const l of lines) {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td class="mono">${escapeHtml(l.ubicacion)}</td>
-      <td class="mono">${escapeHtml(l.ref)}</td>
-      <td class="mono">${escapeHtml(l.lote ?? "")}</td>
-      <td class="mono">${escapeHtml(l.sublote ?? "")}</td>
-      <td class="num mono">${l.cantidad}</td>
-    `;
-    el.tbody.appendChild(tr);
-  }
-  el.countText.textContent = String(lines.length);
-}
-
-function escapeHtml(s) {
-  return String(s ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
-
-async function refresh() {
-  const lines = await getAllLines(db);
-  renderTable(lines);
-}
-
-function focusScanner() {
-  el.scanInput.focus({ preventScroll: true });
-}
-
-function parseCommand(raw) {
-  const s = norm(raw).toUpperCase();
-  if (s === "FIN" || s === "FIN DE INVENTARIO") return { cmd: "FIN" };
-  // Si quisieras comandos explícitos:
-  // LOC:AAA / UBI:AAA
-  if (s.startsWith("LOC:") || s.startsWith("UBI:")) {
-    return { cmd: "LOC", loc: raw.slice(4).trim() };
-  }
-  return null;
-}
-
-async function registerLocation(locRaw) {
-  const loc = norm(locRaw);
-  if (!loc) {
-    setMsg("Ubicación vacía. Vuelve a escanear.", "err");
-    return;
-  }
-  currentLoc = loc;
-  el.locText.textContent = currentLoc;
-  setState(STATE.WAIT_ITEMS);
-  setMsg(`Ubicación fijada: ${currentLoc}. Escanea artículos…`, "ok");
-}
-
-async function registerItem(scanRaw) {
-  const raw = norm(scanRaw);
-  if (!raw) return;
-
-  // Si escanean una ubicación cuando ya estás en items: lo interpretamos como cambio de ubicación
-  // Para evitar falsos positivos: si parece GS1, lo tratamos como artículo. Si NO parece GS1, lo tratamos como ubicación.
-  const gs1 = parseGs1(raw);
-
-  // Si no es GS1, lo consideramos:
-  // - si es muy corto/alfanumérico -> ubicación o ref simple
-  // En modo WAIT_ITEMS, por defecto lo tomamos como REF_ARTICULO (ref simple) salvo que el usuario quiera forzar cambio de ubicación.
-  // Para minimizar interacción, usaremos una regla:
-  // - Si empieza por "U-" o contiene "-" y "/" etc... podría ser ubicación, pero eso varía por empresa.
-  // -> Solución robusta: permitimos cambio de ubicación escaneando "LOC:xxxx" o "UBI:xxxx".
-  const cmd = parseCommand(raw);
-  if (cmd?.cmd === "LOC") {
-    await registerLocation(cmd.loc);
-    return;
-  }
-  if (cmd?.cmd === "FIN") {
-    await finishInventory();
-    return;
-  }
-
-  if (!currentLoc) {
-    setMsg("No hay ubicación activa. Escanea ubicación primero.", "err");
-    setState(STATE.WAIT_LOC);
-    return;
-  }
-
-  // Construir el registro
-  let ref, lote, sublote;
-
-  if (gs1) {
-    ref = gs1.gtin;
-    lote = gs1.lote;
-    sublote = gs1.sublote;
-  } else {
-    // Código interno simple
-    ref = raw;
-    lote = null;
-    sublote = null;
-  }
-
-  const key = makeKey(currentLoc, ref, lote, sublote);
-  const existing = await findByKey(db, key);
-
-  // Si hay sublote: no permitimos duplicados
-  if (sublote) {
-    if (existing.length > 0) {
-      setMsg(`DUPLICADO (con sublote) rechazado: ${ref} / ${lote ?? "-"} / ${sublote}`, "err");
-      return;
-    }
-    const line = {
-      id: uuid(),
-      key,
-      ubicacion: currentLoc,
-      ref,
-      lote: lote ?? null,
-      sublote: sublote ?? null,
-      cantidad: 1,
-      createdAt: Date.now()
-    };
-    await putLine(db, line);
-    lastInsertedId = line.id;
-    setMsg(`OK: ${ref} (lote ${lote ?? "-"}) (sublote ${sublote})`, "ok");
-    return;
-  }
-
-  // Si NO hay sublote: agregamos cantidad sobre la misma key
-  if (existing.length > 0) {
-    const line = existing[0];
-    line.cantidad += 1;
-    line.createdAt = Date.now();
-    await putLine(db, line);
-    lastInsertedId = line.id;
-    setMsg(`OK (agregado): ${ref} (lote ${lote ?? "-"}) → cantidad ${line.cantidad}`, "ok");
-    return;
-  }
-
-  const line = {
-    id: uuid(),
-    key,
-    ubicacion: currentLoc,
-    ref,
-    lote: lote ?? null,
-    sublote: null,
-    cantidad: 1,
-    createdAt: Date.now()
-  };
-  await putLine(db, line);
-  lastInsertedId = line.id;
-  setMsg(`OK: ${ref} (lote ${lote ?? "-"})`, "ok");
-}
-
-async function finishInventory() {
-  setState(STATE.FINISHED);
-  currentLoc = null;
-  el.locText.textContent = "—";
-  setMsg("Inventario finalizado. Puedes exportar a Excel.", "warn");
-}
-
-function handleScan(raw) {
-  el.lastText.textContent = raw;
-
-  const cmd = parseCommand(raw);
-  if (cmd?.cmd === "FIN") return finishInventory();
-
-  if (appState === STATE.FINISHED) {
-    // Si escanean después de FIN, reiniciamos a esperar ubicación
-    setState(STATE.WAIT_LOC);
-    setMsg("Se reanuda captura: escanea UBICACIÓN.", "warn");
-  }
-
-  if (appState === STATE.WAIT_LOC) return registerLocation(raw);
-  if (appState === STATE.WAIT_ITEMS) return registerItem(raw);
-}
-
-async function undoLast() {
-  if (!lastInsertedId) {
-    setMsg("Nada que deshacer.", "warn");
-    return;
-  }
-  await deleteLine(db, lastInsertedId);
-  setMsg("Undo OK (último registro eliminado).", "ok");
-  lastInsertedId = null;
-  await refresh();
-}
-
-async function doExport() {
-  const lines = await getAllLines(db);
-  if (!lines.length) {
-    setMsg("No hay datos para exportar.", "warn");
-    return;
-  }
-  exportToXlsx(lines);
-  setMsg("Exportación generada (.xlsx).", "ok");
-}
-
-async function doReset() {
-  await clearAll(db);
-  currentLoc = null;
-  lastInsertedId = null;
-  el.locText.textContent = "—";
-  el.lastText.textContent = "—";
-  setState(STATE.WAIT_LOC);
-  setMsg("Base limpiada. Escanea UBICACIÓN para empezar.", "warn");
-  await refresh();
-}
-
-function hookScannerInput() {
-  // El escáner suele mandar ENTER al final
-  el.scanInput.addEventListener("keydown", async (e) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      const value = el.scanInput.value;
-      el.scanInput.value = "";
-      await Promise.resolve(handleScan(value));
-      await refresh();
-      focusScanner();
-    }
-  });
-
-  // Mantener foco siempre
-  document.addEventListener("click", () => focusScanner());
-  window.addEventListener("focus", () => focusScanner());
-}
-
-async function main() {
-  db = await openDb();
-  hookScannerInput();
-
-  el.btnUndo.addEventListener("click", async () => { await undoLast(); focusScanner(); });
-  el.btnExport.addEventListener("click", async () => { await doExport(); focusScanner(); });
-  el.btnReset.addEventListener("click", async () => { await doReset(); focusScanner(); });
-
-  setState(STATE.WAIT_LOC);
-  setMsg("Listo. Escanea una UBICACIÓN.", "ok");
-  await refresh();
-  focusScanner();
-}
-
-main().catch(err => {
-  console.error(err);
-  setMsg("Error inicializando la app: " + (err?.message || err), "err");
-});
 // app.js
 import { openDb, getAllLines, putLine, deleteLine, clearAll, findByKey } from "./db.js";
 import { parseGs1 } from "./gs1.js";
@@ -310,7 +10,7 @@ const STATE = {
 };
 
 const el = {
-  scanInput: document.getElementById("scanInput"),
+  scanInput: document.getElementById("scanInput"), // puede no existir
   stateText: document.getElementById("stateText"),
   locText: document.getElementById("locText"),
   lastText: document.getElementById("lastText"),
@@ -333,6 +33,11 @@ function uuid() {
     : String(Date.now()) + "_" + Math.random().toString(16).slice(2);
 }
 
+function safeOn(node, evt, fn) {
+  if (!node) return;
+  node.addEventListener(evt, fn);
+}
+
 function setMsg(text = "", kind = "") {
   if (!el.msg) return;
   el.msg.textContent = text;
@@ -349,14 +54,6 @@ function setState(s) {
 
 function norm(s) {
   return (s ?? "").trim();
-}
-
-function makeKey(ubicacion, ref, lote, sublote) {
-  const u = norm(ubicacion).toUpperCase();
-  const r = norm(ref).toUpperCase();
-  const l = norm(lote || "");
-  const sl = norm(sublote || "");
-  return `${u}|${r}|${l}|${sl}`;
 }
 
 function escapeHtml(s) {
@@ -391,17 +88,29 @@ async function refresh() {
   renderTable(lines);
 }
 
-function focusScanner() {
-  el.scanInput?.focus?.({ preventScroll: true });
+function makeKey(ubicacion, ref, lote, sublote) {
+  const u = norm(ubicacion).toUpperCase();
+  const r = norm(ref).toUpperCase();
+  const l = norm(lote || "");
+  const sl = norm(sublote || "");
+  return `${u}|${r}|${l}|${sl}`;
 }
 
+// --- Comandos (opcionales) ---
 function parseCommand(raw) {
   const s = norm(raw).toUpperCase();
   if (s === "FIN" || s === "FIN DE INVENTARIO") return { cmd: "FIN" };
-  if (s.startsWith("LOC:") || s.startsWith("UBI:")) {
-    return { cmd: "LOC", loc: raw.slice(4).trim() };
-  }
+  if (s.startsWith("LOC:") || s.startsWith("UBI:")) return { cmd: "LOC", loc: raw.slice(4).trim() };
   return null;
+}
+
+// --- Limpieza de entrada: quita DEMO si viene como prefijo ---
+function stripDemoPrefix(raw) {
+  let s = (raw ?? "").trim();
+  const up = s.toUpperCase();
+  if (up === "DEMO") return "";
+  if (up.startsWith("DEMO")) s = s.slice(4).trim();
+  return s;
 }
 
 async function registerLocation(locRaw) {
@@ -414,6 +123,13 @@ async function registerLocation(locRaw) {
   if (el.locText) el.locText.textContent = currentLoc;
   setState(STATE.WAIT_ITEMS);
   setMsg(`Ubicación fijada: ${currentLoc}. Escanea artículos…`, "ok");
+}
+
+async function finishInventory() {
+  setState(STATE.FINISHED);
+  currentLoc = null;
+  if (el.locText) el.locText.textContent = "—";
+  setMsg("Inventario finalizado. Puedes exportar a Excel.", "warn");
 }
 
 async function registerItem(scanRaw) {
@@ -430,23 +146,16 @@ async function registerItem(scanRaw) {
     return;
   }
 
+  // Parseo GS1 (custom)
   let ref, lote, sublote;
-
-  // ✅ Si parseGs1 falla por cualquier motivo, NO paramos la app
-  let gs1 = null;
-  try {
-    gs1 = parseGs1(raw);
-  } catch (e) {
-    console.error(e);
-    setMsg(`ERROR parseGs1: ${e?.message || e}`, "err");
-    gs1 = null;
-  }
+  const gs1 = parseGs1(raw);
 
   if (gs1) {
     ref = gs1.ref;
     lote = gs1.lote;
     sublote = gs1.sublote;
   } else {
+    // si no parsea, registramos el raw completo como REF (tal como pediste)
     ref = raw;
     lote = null;
     sublote = null;
@@ -455,6 +164,7 @@ async function registerItem(scanRaw) {
   const key = makeKey(currentLoc, ref, lote, sublote);
   const existing = await findByKey(db, key);
 
+  // Si hay sublote: no permitimos duplicados
   if (sublote) {
     if (existing.length > 0) {
       setMsg(`DUPLICADO (con sublote) rechazado: ${ref} / ${lote ?? "-"} / ${sublote}`, "err");
@@ -476,6 +186,7 @@ async function registerItem(scanRaw) {
     return;
   }
 
+  // Sin sublote: agregamos cantidad
   if (existing.length > 0) {
     const line = existing[0];
     line.cantidad += 1;
@@ -501,21 +212,6 @@ async function registerItem(scanRaw) {
   setMsg(`OK: ${ref} (lote ${lote ?? "-"})`, "ok");
 }
 
-async function finishInventory() {
-  setState(STATE.FINISHED);
-  currentLoc = null;
-  if (el.locText) el.locText.textContent = "—";
-  setMsg("Inventario finalizado. Puedes exportar a Excel.", "warn");
-}
-
-function stripDemoPrefix(raw) {
-  let s = (raw ?? "").trim();
-  const up = s.toUpperCase();
-  if (up === "DEMO") return "";
-  if (up.startsWith("DEMO")) s = s.slice(4).trim();
-  return s;
-}
-
 function handleScan(raw) {
   raw = stripDemoPrefix(raw);
   if (!raw) return;
@@ -525,10 +221,12 @@ function handleScan(raw) {
   const cmd = parseCommand(raw);
   if (cmd?.cmd === "FIN") return finishInventory();
 
-  // ✅ Ubicación
-  if (appState === STATE.WAIT_LOC) return registerLocation(raw);
+  if (appState === STATE.FINISHED) {
+    setState(STATE.WAIT_LOC);
+    setMsg("Se reanuda captura: escanea UBICACIÓN.", "warn");
+  }
 
-  // ✅ Artículos
+  if (appState === STATE.WAIT_LOC) return registerLocation(raw);
   if (appState === STATE.WAIT_ITEMS) return registerItem(raw);
 }
 
@@ -564,6 +262,7 @@ async function doReset() {
   await refresh();
 }
 
+// --- Captura global de teclado (NO depende de foco) ---
 function hookScannerInput() {
   let buffer = "";
 
@@ -576,10 +275,8 @@ function hookScannerInput() {
       .then(refresh)
       .catch((e) => {
         console.error(e);
-        setMsg(`ERROR: ${e?.message || e}`, "err");
+        setMsg("ERROR: " + (e?.message || e), "err");
       });
-
-    focusScanner();
   }
 
   document.addEventListener("keydown", (e) => {
@@ -599,42 +296,37 @@ function hookScannerInput() {
     if (e.key.length === 1) buffer += e.key;
   });
 
-  document.addEventListener("click", () => focusScanner());
-  window.addEventListener("focus", () => focusScanner());
-}
-
-function safeOn(elm, evt, fn) {
-  if (!elm) return;
-  elm.addEventListener(evt, fn);
+  // Mantén compatibilidad con lectores que “exigen” input
+  safeOn(document, "click", () => el.scanInput?.focus?.({ preventScroll: true }));
+  safeOn(window, "focus", () => el.scanInput?.focus?.({ preventScroll: true }));
 }
 
 async function main() {
-  // ✅ Captura errores globales y los muestra
+  // Reporta errores sin matar la app
   window.addEventListener("error", (e) => {
     const msg = e?.error?.message || e?.message || String(e);
     console.error(e);
-    setMsg(`ERROR JS: ${msg}`, "err");
+    setMsg("ERROR JS: " + msg, "err");
   });
   window.addEventListener("unhandledrejection", (e) => {
     console.error(e);
-    setMsg(`PROMISE ERROR: ${e?.reason?.message || e?.reason || e}`, "err");
+    setMsg("PROMISE ERROR: " + (e?.reason?.message || e?.reason || e), "err");
   });
 
   db = await openDb();
+
   hookScannerInput();
 
-  safeOn(el.btnUndo, "click", async () => { await undoLast(); focusScanner(); });
-  safeOn(el.btnExport, "click", async () => { await doExport(); focusScanner(); });
-  safeOn(el.btnReset, "click", async () => { await doReset(); focusScanner(); });
+  safeOn(el.btnUndo, "click", async () => { await undoLast(); });
+  safeOn(el.btnExport, "click", async () => { await doExport(); });
+  safeOn(el.btnReset, "click", async () => { await doReset(); });
 
   setState(STATE.WAIT_LOC);
   setMsg("Listo. Escanea una UBICACIÓN.", "ok");
   await refresh();
-  focusScanner();
 }
 
 main().catch((err) => {
   console.error(err);
   setMsg("Error inicializando la app: " + (err?.message || err), "err");
 });
-
