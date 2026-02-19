@@ -227,10 +227,29 @@ function stripDemoPrefix(raw) {
 }
 
 function handleScan(raw) {
-  // --- FILTRO DEMO (clave) ---
-  raw = stripDemoPrefix(raw);
+  raw = (raw ?? "").trim();
+
   if (!raw) return;
-  // --- FIN FILTRO DEMO ---
+
+  const upper = raw.toUpperCase();
+
+  // 1️⃣ Ignorar lectura DEMO sola
+  if (upper === "DEMO") {
+    return;
+  }
+
+  // 2️⃣ Si empieza por DEMO, eliminarlo
+  if (upper.startsWith("DEMO")) {
+    raw = raw.slice(4).trim();
+  }
+
+  // 3️⃣ Si después de limpiar no hay contenido válido, salir
+  if (!raw) return;
+
+  // 4️⃣ Si no parece artículo (no contiene 02 o guion típico), ignorar
+  if (!raw.includes("02") && !raw.includes("-")) {
+    return;
+  }
 
   el.lastText.textContent = raw;
 
@@ -349,3 +368,4 @@ main().catch((err) => {
   console.error(err);
   setMsg("Error inicializando la app: " + (err?.message || err), "err");
 });
+
