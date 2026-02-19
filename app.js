@@ -1,3 +1,4 @@
+// app.js
 import { openDb, getAllLines, putLine, deleteLine, clearAll, findByKey } from "./db.js";
 import { parseGs1 } from "./gs1.js";
 import { exportToXlsx } from "./export.js";
@@ -5,7 +6,7 @@ import { exportToXlsx } from "./export.js";
 const STATE = {
   WAIT_LOC: "WAIT_LOC",
   WAIT_ITEMS: "WAIT_ITEMS",
-  FINISHED: "FINISHED"
+  FINISHED: "FINISHED",
 };
 
 const el = {
@@ -27,7 +28,6 @@ let currentLoc = null;
 let lastInsertedId = null;
 
 function uuid() {
-  // Suficiente para este caso
   return crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + "_" + Math.random().toString(16).slice(2);
 }
 
@@ -86,14 +86,13 @@ async function refresh() {
 }
 
 function focusScanner() {
-  el.scanInput.focus({ preventScroll: true });
+  // Mantener por compatibilidad (algunos lectores “necesitan” un input)
+  el.scanInput?.focus?.({ preventScroll: true });
 }
 
 function parseCommand(raw) {
   const s = norm(raw).toUpperCase();
   if (s === "FIN" || s === "FIN DE INVENTARIO") return { cmd: "FIN" };
-  // Si quisieras comandos explícitos:
-  // LOC:AAA / UBI:AAA
   if (s.startsWith("LOC:") || s.startsWith("UBI:")) {
     return { cmd: "LOC", loc: raw.slice(4).trim() };
   }
@@ -116,16 +115,12 @@ async function registerItem(scanRaw) {
   const raw = norm(scanRaw);
   if (!raw) return;
 
-  // Si escanean una ubicación cuando ya estás en items: lo interpretamos como cambio de ubicación
-  // Para evitar falsos positivos: si parece GS1, lo tratamos como artículo. Si NO parece GS1, lo tratamos como ubicación.
-  const gs1 = parseGs1(raw);
+  // Descarta ruido residual
+  if (raw.toUpperCase() === "DEMO") {
+    setMsg("Lectura descartada: DEMO", "warn");
+    return;
+  }
 
-  // Si no es GS1, lo consideramos:
-  // - si es muy corto/alfanumérico -> ubicación o ref simple
-  // En modo WAIT_ITEMS, por defecto lo tomamos como REF_ARTICULO (ref simple) salvo que el usuario quiera forzar cambio de ubicación.
-  // Para minimizar interacción, usaremos una regla:
-  // - Si empieza por "U-" o contiene "-" y "/" etc... podría ser ubicación, pero eso varía por empresa.
-  // -> Solución robusta: permitimos cambio de ubicación escaneando "LOC:xxxx" o "UBI:xxxx".
   const cmd = parseCommand(raw);
   if (cmd?.cmd === "LOC") {
     await registerLocation(cmd.loc);
@@ -145,10 +140,13 @@ async function registerItem(scanRaw) {
   // Construir el registro
   let ref, lote, sublote;
 
+  const gs1 = parseGs1(raw);
+
   if (gs1) {
-      ref = gs1.ref;
-  lote = gs1.lote;
-  sublote = gs1.sublote;
+    // IMPORTANTE: parseGs1 devuelve { ref, lote, sublote }
+    ref = gs1.ref;
+    lote = gs1.lote;
+    sublote = gs1.sublote;
   } else {
     // Código interno simple
     ref = raw;
@@ -173,7 +171,7 @@ async function registerItem(scanRaw) {
       lote: lote ?? null,
       sublote: sublote ?? null,
       cantidad: 1,
-      createdAt: Date.now()
+      createdAt: Date.now(),
     };
     await putLine(db, line);
     lastInsertedId = line.id;
@@ -200,7 +198,7 @@ async function registerItem(scanRaw) {
     lote: lote ?? null,
     sublote: null,
     cantidad: 1,
-    createdAt: Date.now()
+    createdAt: Date.now(),
   };
   await putLine(db, line);
   lastInsertedId = line.id;
@@ -214,14 +212,32 @@ async function finishInventory() {
   setMsg("Inventario finalizado. Puedes exportar a Excel.", "warn");
 }
 
+function stripDemoPrefix(raw) {
+  let s = (raw ?? "").trim();
+  const up = s.toUpperCase();
+
+  // Si llega DEMO solo, lo descartamos
+  if (up === "DEMO") return "";
+
+  // Si llega como prefijo (confirmado por tu PDA/pistola), lo quitamos
+  if (up.startsWith("DEMO")) {
+    s = s.slice(4).trim();
+  }
+  return s;
+}
+
 function handleScan(raw) {
+  // --- FILTRO DEMO (clave) ---
+  raw = stripDemoPrefix(raw);
+  if (!raw) return;
+  // --- FIN FILTRO DEMO ---
+
   el.lastText.textContent = raw;
 
   const cmd = parseCommand(raw);
   if (cmd?.cmd === "FIN") return finishInventory();
 
   if (appState === STATE.FINISHED) {
-    // Si escanean después de FIN, reiniciamos a esperar ubicación
     setState(STATE.WAIT_LOC);
     setMsg("Se reanuda captura: escanea UBICACIÓN.", "warn");
   }
@@ -262,60 +278,46 @@ async function doReset() {
   await refresh();
 }
 
+/**
+ * Captura robusta para lectores tipo “keyboard wedge”:
+ * - Acumula teclas
+ * - Flushea SOLO con Enter/Tab (evita concatenaciones por timeout)
+ */
 function hookScannerInput() {
-  // --- Captura global tipo escáner (keyboard wedge) ---
-  // Acumula caracteres y dispara al recibir Enter/Tab o por timeout corto.
   let buffer = "";
-  let lastTs = 0;
-  let timer = null;
 
   function flush() {
-    if (!buffer) return;
-    const value = buffer;
+    const value = buffer.trim();
     buffer = "";
-    clearTimeout(timer);
-    timer = null;
+    if (!value) return;
 
     Promise.resolve(handleScan(value))
       .then(refresh)
       .catch(console.error);
+
+    focusScanner();
   }
 
   document.addEventListener("keydown", (e) => {
-    // Ignora combinaciones típicas
     if (e.ctrlKey || e.altKey || e.metaKey) return;
 
-    // Si el usuario está escribiendo en un input/textarea visible, no interceptamos
-    const tag = (document.activeElement?.tagName || "").toLowerCase();
-    const isTypingField =
-      tag === "input" || tag === "textarea" || document.activeElement?.isContentEditable;
-
-    // El escáner suele ir "rápido": si hay foco en un campo y el usuario teclea lento, no molestamos.
-    const now = Date.now();
-    const delta = now - lastTs;
-    lastTs = now;
-
-    // Si estás escribiendo a mano (delta grande) y en un input, no interceptamos.
-    if (isTypingField && delta > 80) return;
-
-    // Fin de lectura
     if (e.key === "Enter" || e.key === "Tab") {
       e.preventDefault();
       flush();
       return;
     }
 
-    // Caracteres imprimibles
+    if (e.key === "Backspace") {
+      buffer = buffer.slice(0, -1);
+      return;
+    }
+
     if (e.key.length === 1) {
       buffer += e.key;
-
-      // Timeout corto: si el escáner no manda Enter, esto igualmente “cierra” lectura
-      clearTimeout(timer);
-      timer = setTimeout(flush, 80);
     }
   });
 
-  // Mantén el input (aunque sea oculto) por si algún escáner exige un campo
+  // Mantener “foco de pestaña”
   document.addEventListener("click", () => focusScanner());
   window.addEventListener("focus", () => focusScanner());
 }
@@ -324,9 +326,18 @@ async function main() {
   db = await openDb();
   hookScannerInput();
 
-  el.btnUndo.addEventListener("click", async () => { await undoLast(); focusScanner(); });
-  el.btnExport.addEventListener("click", async () => { await doExport(); focusScanner(); });
-  el.btnReset.addEventListener("click", async () => { await doReset(); focusScanner(); });
+  el.btnUndo.addEventListener("click", async () => {
+    await undoLast();
+    focusScanner();
+  });
+  el.btnExport.addEventListener("click", async () => {
+    await doExport();
+    focusScanner();
+  });
+  el.btnReset.addEventListener("click", async () => {
+    await doReset();
+    focusScanner();
+  });
 
   setState(STATE.WAIT_LOC);
   setMsg("Listo. Escanea una UBICACIÓN.", "ok");
@@ -334,9 +345,7 @@ async function main() {
   focusScanner();
 }
 
-main().catch(err => {
+main().catch((err) => {
   console.error(err);
   setMsg("Error inicializando la app: " + (err?.message || err), "err");
 });
-
-
