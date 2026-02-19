@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Mini Inventario (HTML)</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <main class="wrap">
+    <header class="top">
+      <div>
+        <h1>Inventario</h1>
+        <p class="muted">Escanea ubicación → escanea artículos → cambia ubicación… Escanea <b>FIN</b> para cerrar.</p>
+      </div>
+      <div class="actions">
+        <button id="btnUndo" class="secondary" title="Deshacer último registro">Undo</button>
+        <button id="btnExport" class="secondary">Exportar Excel</button>
+        <button id="btnReset" class="danger">Reset</button>
+      </div>
+    </header>
+
+    <section class="status">
+      <div class="card">
+        <div class="label">Estado</div>
+        <div id="stateText" class="big">Esperando UBICACIÓN</div>
+        <div class="row">
+          <div>
+            <div class="label">Ubicación actual</div>
+            <div id="locText" class="mono">—</div>
+          </div>
+          <div>
+            <div class="label">Último leído</div>
+            <div id="lastText" class="mono">—</div>
+          </div>
+          <div>
+            <div class="label">Total líneas</div>
+            <div id="countText" class="mono">0</div>
+          </div>
+        </div>
+        <div id="msg" class="msg"></div>
+      </div>
+
+      <!-- Input invisible: el escáner escribe aquí -->
+      <input id="scanInput" class="scan-input" autocomplete="off" inputmode="none" />
+    </section>
+
+    <section class="table">
+      <div class="table-head">
+        <h2>Registros</h2>
+        <div class="muted">Vista previa (se guarda en el navegador con IndexedDB)</div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Ubicación</th>
+              <th>Ref Artículo</th>
+              <th>Lote</th>
+              <th>Sublote</th>
+              <th class="num">Cantidad</th>
+            </tr>
+          </thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <!-- SheetJS para exportar .xlsx -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
