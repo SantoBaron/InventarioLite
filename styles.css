@@ -5,12 +5,16 @@ body { margin: 0; background: #0b0e14; color: #e8eefc; }
 h1 { margin: 0; font-size: 22px; }
 h2 { margin: 0; font-size: 16px; }
 .muted { color: #9aa7c3; margin: 6px 0 0; }
+.muted.compact { margin-top: 0; font-size: 13px; }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; }
 button { border: 1px solid #2a3550; background: #141b2b; color: #e8eefc; padding: 10px 12px; border-radius: 10px; cursor: pointer; }
 button:hover { background: #18213a; }
 button.secondary { background: #101826; }
+button.warn { border-color: #6b592a; background: #2d2412; }
+button.warn:hover { background: #3c2e16; }
 button.danger { border-color: #6b2a2a; background: #2a1414; }
 button.danger:hover { background: #351717; }
+button.mini { padding: 6px 8px; border-radius: 8px; font-size: 12px; }
 
 .status { margin-top: 14px; }
 .card { border: 1px solid #22304d; background: #0f1524; border-radius: 14px; padding: 14px; }
@@ -38,6 +42,8 @@ tbody tr:hover td { background: #111a2d; }
   text-underline-offset: 4px;
 }
 .num { text-align: right; }
+.actions-cell { white-space: nowrap; display: flex; gap: 6px; }
+
 .scan-input {
   position: absolute;
   left: -10000px;
@@ -67,6 +73,16 @@ tbody tr:hover td { background: #111a2d; }
   padding: 9px 10px;
   border-radius: 8px;
 }
+.manual-form .checkbox-label {
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 8px;
+}
+.manual-form .checkbox-label input {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+}
 .manual-form menu { margin: 6px 0 0; padding: 0; display: flex; justify-content: flex-end; gap: 8px; }
 
 @media (max-width: 980px) {
@@ -86,5 +102,9 @@ tbody tr:hover td { background: #111a2d; }
 
   .row {
     grid-template-columns: 1fr;
+  }
+
+  .actions-cell {
+    flex-wrap: wrap;
   }
 }
