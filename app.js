@@ -312,6 +312,8 @@ function handleScan(raw) {
 
   const cmd = parseCommand(raw);
   if (cmd?.cmd === "FIN") return finishInventory();
+  if (cmd?.cmd === "NEXT_LOC") return closeCurrentLocation();
+  if (cmd?.cmd === "LOC") return registerLocation(cmd.loc);
 
   if (appState === STATE.FINISHED) {
     setState(STATE.WAIT_LOC);
