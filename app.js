@@ -1,7 +1,7 @@
 // app.js
 import { openDb, getAllLines, putLine, deleteLine, clearAll, findByKey } from "./db.js";
 import { parseGs1 } from "./gs1.js";
-import { exportToXlsx } from "./export.js";
+import { exportToCsv, exportToXlsx } from "./export.js";
 
 const STATE = {
   WAIT_LOC: "WAIT_LOC",
@@ -19,6 +19,7 @@ const el = {
   tbody: document.getElementById("tbody"),
   btnUndo: document.getElementById("btnUndo"),
   btnExport: document.getElementById("btnExport"),
+  btnExportCsv: document.getElementById("btnExportCsv"),
   btnReset: document.getElementById("btnReset"),
 };
 
@@ -100,6 +101,7 @@ function makeKey(ubicacion, ref, lote, sublote) {
 function parseCommand(raw) {
   const s = norm(raw).toUpperCase();
   if (s === "FIN" || s === "FIN DE INVENTARIO") return { cmd: "FIN" };
+  if (s === "SIGUIENTE" || s === "FIN UBI" || s === "FIN UBICACION") return { cmd: "NEXT_LOC" };
   if (s.startsWith("LOC:") || s.startsWith("UBI:")) return { cmd: "LOC", loc: raw.slice(4).trim() };
   return null;
 }
@@ -129,7 +131,14 @@ async function finishInventory() {
   setState(STATE.FINISHED);
   currentLoc = null;
   if (el.locText) el.locText.textContent = "—";
-  setMsg("Inventario finalizado. Puedes exportar a Excel.", "warn");
+  setMsg("Inventario finalizado. Puedes exportar a Excel o CSV.", "warn");
+}
+
+async function closeCurrentLocation() {
+  currentLoc = null;
+  if (el.locText) el.locText.textContent = "—";
+  setState(STATE.WAIT_LOC);
+  setMsg("Ubicación cerrada. Escanea la siguiente ubicación.", "warn");
 }
 
 async function registerItem(scanRaw) {
@@ -139,6 +148,7 @@ async function registerItem(scanRaw) {
   const cmd = parseCommand(raw);
   if (cmd?.cmd === "LOC") return registerLocation(cmd.loc);
   if (cmd?.cmd === "FIN") return finishInventory();
+  if (cmd?.cmd === "NEXT_LOC") return closeCurrentLocation();
 
   if (!currentLoc) {
     setMsg("No hay ubicación activa. Escanea ubicación primero.", "err");
@@ -251,6 +261,16 @@ async function doExport() {
   setMsg("Exportación generada (.xlsx).", "ok");
 }
 
+async function doExportCsv() {
+  const lines = await getAllLines(db);
+  if (!lines.length) {
+    setMsg("No hay datos para exportar.", "warn");
+    return;
+  }
+  exportToCsv(lines);
+  setMsg("Exportación generada (.csv).", "ok");
+}
+
 async function doReset() {
   await clearAll(db);
   currentLoc = null;
@@ -267,15 +287,16 @@ function hookScannerInput() {
   let buffer = "";
   let timer = null;
 
-  function scheduleFlushIfWaitingLocation() {
-    // Solo hacemos timeout-flush en modo UBICACIÓN
-    if (appState !== STATE.WAIT_LOC) return;
+  function scheduleFlushByState() {
+    if (appState === STATE.FINISHED) return;
+
+    const timeoutMs = appState === STATE.WAIT_LOC ? 250 : 90;
 
     clearTimeout(timer);
     timer = setTimeout(() => {
-      // Si el lector no manda Enter para ubicación, cerramos lectura por tiempo
+      // Si el lector no manda Enter/Tab, cerramos lectura por tiempo
       if (buffer.trim()) flush();
-    }, 250); // 250ms suele ser seguro para lectura completa de ubicación
+    }, timeoutMs);
   }
 
   function flush() {
@@ -306,13 +327,13 @@ function hookScannerInput() {
 
     if (e.key === "Backspace") {
       buffer = buffer.slice(0, -1);
-      scheduleFlushIfWaitingLocation();
+      scheduleFlushByState();
       return;
     }
 
     if (e.key.length === 1) {
       buffer += e.key;
-      scheduleFlushIfWaitingLocation();
+      scheduleFlushByState();
     }
   });
 
@@ -338,6 +359,7 @@ async function main() {
 
   safeOn(el.btnUndo, "click", async () => { await undoLast(); });
   safeOn(el.btnExport, "click", async () => { await doExport(); });
+  safeOn(el.btnExportCsv, "click", async () => { await doExportCsv(); });
   safeOn(el.btnReset, "click", async () => { await doReset(); });
 
   setState(STATE.WAIT_LOC);
@@ -349,4 +371,3 @@ main().catch((err) => {
   console.error(err);
   setMsg("Error inicializando la app: " + (err?.message || err), "err");
 });
-
