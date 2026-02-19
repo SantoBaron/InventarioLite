@@ -1,13 +1,24 @@
+// gs1.js
+
 function normalize(input) {
   if (!input) return "";
   let s = input.trim();
+
+  // Quitar prefijo AIM si llega
   if (s.startsWith("]C1")) s = s.slice(3);
 
-  // Separador real en vuestro lector
+  // Normalizaciones típicas de codificación (por si llega mojibake)
+  // (en algunos entornos el carácter Ê puede aparecer como ÃŠ o venir precedido por Â)
+  s = s.replaceAll("ÃŠ", "Ê");
+  s = s.replaceAll("Â", "");
+
+  // Convertir separador visible del lector a separador interno
   s = s.replaceAll("Ê", "|");
 
-  // Quitar controles
-  s = s.replace(/[\x00-\x1F]/g, "");
+  // IMPORTANTÍSIMO:
+  // Si el separador llega como caracteres de control (p.ej. GS ASCII 29),
+  // NO los eliminamos: los convertimos a separador.
+  s = s.replace(/[\x00-\x1F]/g, "|");
 
   // Limpiar separadores repetidos
   s = s.replace(/\|+/g, "|");
@@ -50,6 +61,6 @@ export function parseGs1(rawInput) {
     ref,
     lote: lote || null,
     sublote: sublote || null,
-    raw: rawInput
+    raw: rawInput,
   };
 }
