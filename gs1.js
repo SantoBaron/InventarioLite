@@ -1,82 +1,86 @@
-const GS = "\u001d"; // Group Separator (FNC1)
+const GS = "\u001D"; // separador lógico interno (Group Separator)
 
-function stripParens(s) {
-  // Convierte "(01)123(10)ABC(21)XYZ" en "01|123|10|ABC|21|XYZ" por pares
-  const parts = [];
-  let i = 0;
-  while (i < s.length) {
-    if (s[i] === "(") {
-      const j = s.indexOf(")", i);
-      if (j === -1) break;
-      const ai = s.slice(i + 1, j);
-      i = j + 1;
-      let next = s.indexOf("(", i);
-      const val = (next === -1) ? s.slice(i) : s.slice(i, next);
-      parts.push([ai, val]);
-      i = (next === -1) ? s.length : next;
-    } else {
-      // No tiene formato con paréntesis
-      return null;
-    }
-  }
-  return parts.length ? parts : null;
+/**
+ * Normaliza la lectura:
+ * - Quita ]C1 si viene
+ * - Convierte caracteres de control y 'Ê' en GS
+ */
+function normalize(input) {
+  if (!input) return "";
+  let s = input.trim();
+
+  // Prefijo AIM típico
+  if (s.startsWith("]C1")) s = s.slice(3);
+
+  // En vuestro caso, el lector usa Ê como separador
+  s = s.replaceAll("Ê", GS);
+
+  // Cualquier control ASCII -> GS
+  s = s.replace(/[\x00-\x1F]/g, GS);
+
+  // Limpieza: colapsa GS repetidos
+  s = s.replace(new RegExp(`${GS}+`, "g"), GS);
+
+  return s;
 }
 
 /**
- * Parser mínimo:
- * - 01: GTIN (14 fijo)
- * - 10: Lote (variable, termina en GS o fin)
- * - 21: Serial/Sublote (variable, termina en GS o fin)
- *
- * Devuelve null si no parece GS1.
+ * Trocea por separador y extrae (ai, value).
+ * Admite AIs de 2 a 4 dígitos al inicio del segmento.
  */
-export function parseGs1(inputRaw) {
-  const input = (inputRaw || "").trim();
-  if (!input) return null;
+function parseSegments(raw) {
+  const s = normalize(raw);
+  if (!s) return [];
 
-  // Caso 1: Con paréntesis
-  const pairs = stripParens(input);
-  if (pairs) {
-    const out = {};
-    for (const [ai, val] of pairs) out[ai] = val;
-    if (out["01"]) {
-      return {
-        gtin: out["01"],
-        lote: out["10"] ?? null,
-        sublote: out["21"] ?? null,
-        raw: input
-      };
-    }
-    return null;
-  }
+  const parts = s.split(GS).map(p => p.trim()).filter(Boolean);
 
-  // Caso 2: Sin paréntesis: AIs concatenados con GS para los variables
-  // Heurística: empieza por 01 y tiene al menos 14 dígitos tras el 01
-  if (!input.startsWith("01")) return null;
-  if (input.length < 2 + 14) return null;
+  return parts.map(seg => {
+    const m = seg.match(/^(\d{2,4})(.*)$/);
+    if (!m) return { ai: null, value: seg };
+    return { ai: m[1], value: (m[2] || "").trim() };
+  });
+}
 
-  const gtin = input.slice(2, 16);
-  if (!/^\d{14}$/.test(gtin)) return null;
+/**
+ * Parser flexible para vuestro “GS1-like”:
+ * - REF: prioriza 01, luego 02, luego 240/241; si no, primer segmento sin ai.
+ * - LOTE: AI 10
+ * - SUBLOTE: AI 21; si 21 vacío y hay 04 con valor -> usa 04 como sublote
+ */
+export function parseGs1(rawInput) {
+  const segs = parseSegments(rawInput);
+  if (!segs.length) return null;
 
-  let i = 16;
-  let lote = null;
-  let sublote = null;
+  const get = (ai) => segs.find(x => x.ai === ai)?.value ?? null;
 
-  while (i < input.length) {
-    const ai = input.slice(i, i + 2);
-    i += 2;
+  const v01 = get("01");
+  const v02 = get("02");
+  const v240 = get("240");
+  const v241 = get("241");
 
-    if (ai === "10" || ai === "21") {
-      const end = input.indexOf(GS, i);
-      const val = (end === -1) ? input.slice(i) : input.slice(i, end);
-      i = (end === -1) ? input.length : end + 1;
-      if (ai === "10") lote = val || null;
-      if (ai === "21") sublote = val || null;
-    } else {
-      // AI no contemplado → salimos (no rompemos la app)
-      break;
-    }
-  }
+  const lote = get("10");
+  let sublote = get("21");
 
-  return { gtin, lote, sublote, raw: input };
+  const v04 = get("04");
+
+  // Si 21 existe pero vacío (o null) y hay 04, tomamos 04 como sublote interno
+  if (!sublote && v04) sublote = v04;
+
+  // REF: no asumimos numérico
+  const ref =
+    (v01 && v01.length ? v01 : null) ||
+    (v02 && v02.length ? v02 : null) ||
+    (v240 && v240.length ? v240 : null) ||
+    (v241 && v241.length ? v241 : null) ||
+    (segs.find(x => !x.ai)?.value ?? null);
+
+  // Si no tenemos ref, no lo consideramos válido
+  if (!ref) return null;
+
+  return {
+    ref,
+    lote: lote && lote.length ? lote : null,
+    sublote: sublote && sublote.length ? sublote : null,
+    raw: rawInput
+  };
 }
