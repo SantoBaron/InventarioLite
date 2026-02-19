@@ -1,6 +1,27 @@
 :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
 body { margin: 0; background: #0b0e14; color: #e8eefc; }
 .wrap { max-width: 1100px; margin: 0 auto; padding: 18px; }
+body.pda-mode {
+  background: #dff3ff;
+  color: #0f2d4a;
+}
+body.pda-mode .muted,
+body.pda-mode .label { color: #35638e; }
+body.pda-mode .card,
+body.pda-mode .table-wrap { border-color: #8fc3ea; background: #eef8ff; }
+body.pda-mode thead th { color: #35638e; background: #d9efff; border-bottom-color: #8fc3ea; }
+body.pda-mode tbody td { border-bottom-color: #c5e3f8; }
+body.pda-mode tbody tr:hover td { background: #e3f4ff; }
+body.pda-mode button { border-color: #84b9e1; background: #d7edff; color: #113a5d; }
+body.pda-mode button:hover { background: #c8e6ff; }
+body.pda-mode button.secondary { background: #d2ebff; }
+body.pda-mode button.secondary.active { border-color: #2f85d8; background: #74beff; color: #073357; }
+body.pda-mode button.danger { border-color: #d68585; background: #ffd8d8; color: #6f1919; }
+body.pda-mode button.warn { border-color: #d1b16d; background: #fff2cc; color: #5f470f; }
+body.pda-mode .msg.ok { color: #0c8b5a; }
+body.pda-mode .msg.err { color: #c33939; }
+body.pda-mode .msg.warn { color: #8f6a00; }
+
 .top { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
 h1 { margin: 0; font-size: 22px; }
 h2 { margin: 0; font-size: 16px; }

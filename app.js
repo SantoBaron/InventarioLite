@@ -141,6 +141,9 @@ function parseCommand(raw) {
   const s = norm(raw).toUpperCase();
   if (s === "FIN" || s === "FIN DE INVENTARIO") return { cmd: "FIN" };
   if (s === "SIGUIENTE" || s === "FIN UBI" || s === "FIN UBICACION") return { cmd: "NEXT_LOC" };
+  if (s === "PDA" || s === "MODO PDA") return { cmd: "PDA_TOGGLE" };
+  if (s === "PDA ON" || s === "MODO PDA ON") return { cmd: "PDA_ON" };
+  if (s === "PDA OFF" || s === "MODO PDA OFF") return { cmd: "PDA_OFF" };
   if (s.startsWith("LOC:") || s.startsWith("UBI:")) return { cmd: "LOC", loc: raw.slice(4).trim() };
   return null;
 }
@@ -167,12 +170,19 @@ function normalizeScannerRaw(raw) {
 }
 
 function updatePdaModeUi() {
-
   if (!el.btnModePda) return;
   el.btnModePda.textContent = `Modo PDA: ${pdaMode ? "ON" : "OFF"}`;
   el.btnModePda.classList.toggle("active", pdaMode);
+  document.body.classList.toggle("pda-mode", pdaMode);
 }
 
+function setPdaMode(enabled) {
+  pdaMode = Boolean(enabled);
+  updatePdaModeUi();
+  try {
+    localStorage.setItem("inventario_pda_mode", pdaMode ? "1" : "0");
+  } catch (_) {}
+}
 
 function buildGs1Payload({ ref, lote, sublote }) {
   const parts = [`02${norm(ref)}`];
@@ -539,6 +549,21 @@ function handleScan(raw) {
   if (el.lastText) el.lastText.textContent = raw;
 
   const cmd = parseCommand(raw);
+  if (cmd?.cmd === "PDA_TOGGLE") {
+    setPdaMode(!pdaMode);
+    setMsg(`Modo lector activo: ${pdaMode ? "PDA integrado" : "Pistola/teclado"}.`, "ok");
+    return;
+  }
+  if (cmd?.cmd === "PDA_ON") {
+    setPdaMode(true);
+    setMsg("Modo lector activo: PDA integrado.", "ok");
+    return;
+  }
+  if (cmd?.cmd === "PDA_OFF") {
+    setPdaMode(false);
+    setMsg("Modo lector activo: Pistola/teclado.", "ok");
+    return;
+  }
   if (cmd?.cmd === "FIN") return finishInventory();
   if (cmd?.cmd === "NEXT_LOC") return closeCurrentLocation();
   if (cmd?.cmd === "LOC") return registerLocation(cmd.loc);
@@ -738,11 +763,14 @@ async function main() {
   hookScannerInput();
 
   safeOn(el.btnUndo, "click", async () => { await undoLast(); });
-  safeOn(el.btnModePda, "click", () => {
-    pdaMode = !pdaMode;
-    updatePdaModeUi();
+  const onTogglePdaMode = (evt) => {
+    evt?.preventDefault?.();
+    evt?.stopPropagation?.();
+    setPdaMode(!pdaMode);
     setMsg(`Modo lector activo: ${pdaMode ? "PDA integrado" : "Pistola/teclado"}.`, "ok");
-  });
+  };
+  safeOn(el.btnModePda, "click", onTogglePdaMode);
+  safeOn(el.btnModePda, "touchend", onTogglePdaMode);
 
   const onNextLoc = async () => {
     await closeCurrentLocation();
@@ -791,6 +819,10 @@ async function main() {
     });
   });
 
+  try {
+    const stored = localStorage.getItem("inventario_pda_mode");
+    if (stored != null) pdaMode = stored === "1";
+  } catch (_) {}
   updatePdaModeUi();
   setState(STATE.WAIT_LOC);
   setMsg("Listo. Escanea una UBICACIÓN.", "ok");
