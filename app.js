@@ -263,19 +263,59 @@ async function doReset() {
 }
 
 function hookScannerInput() {
-  // El escáner suele mandar ENTER al final
-  el.scanInput.addEventListener("keydown", async (e) => {
-    if (e.key === "Enter") {
+  // --- Captura global tipo escáner (keyboard wedge) ---
+  // Acumula caracteres y dispara al recibir Enter/Tab o por timeout corto.
+  let buffer = "";
+  let lastTs = 0;
+  let timer = null;
+
+  function flush() {
+    if (!buffer) return;
+    const value = buffer;
+    buffer = "";
+    clearTimeout(timer);
+    timer = null;
+
+    Promise.resolve(handleScan(value))
+      .then(refresh)
+      .catch(console.error);
+  }
+
+  document.addEventListener("keydown", (e) => {
+    // Ignora combinaciones típicas
+    if (e.ctrlKey || e.altKey || e.metaKey) return;
+
+    // Si el usuario está escribiendo en un input/textarea visible, no interceptamos
+    const tag = (document.activeElement?.tagName || "").toLowerCase();
+    const isTypingField =
+      tag === "input" || tag === "textarea" || document.activeElement?.isContentEditable;
+
+    // El escáner suele ir "rápido": si hay foco en un campo y el usuario teclea lento, no molestamos.
+    const now = Date.now();
+    const delta = now - lastTs;
+    lastTs = now;
+
+    // Si estás escribiendo a mano (delta grande) y en un input, no interceptamos.
+    if (isTypingField && delta > 80) return;
+
+    // Fin de lectura
+    if (e.key === "Enter" || e.key === "Tab") {
       e.preventDefault();
-      const value = el.scanInput.value;
-      el.scanInput.value = "";
-      await Promise.resolve(handleScan(value));
-      await refresh();
-      focusScanner();
+      flush();
+      return;
+    }
+
+    // Caracteres imprimibles
+    if (e.key.length === 1) {
+      buffer += e.key;
+
+      // Timeout corto: si el escáner no manda Enter, esto igualmente “cierra” lectura
+      clearTimeout(timer);
+      timer = setTimeout(flush, 80);
     }
   });
 
-  // Mantener foco siempre
+  // Mantén el input (aunque sea oculto) por si algún escáner exige un campo
   document.addEventListener("click", () => focusScanner());
   window.addEventListener("focus", () => focusScanner());
 }
@@ -298,3 +338,4 @@ main().catch(err => {
   console.error(err);
   setMsg("Error inicializando la app: " + (err?.message || err), "err");
 });
+
