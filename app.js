@@ -19,7 +19,17 @@ const el = {
   tbody: document.getElementById("tbody"),
   btnUndo: document.getElementById("btnUndo"),
   btnNextLoc: document.getElementById("btnNextLoc"),
+  btnNextLocCard: document.getElementById("btnNextLocCard"),
   btnFinish: document.getElementById("btnFinish"),
+  btnFinishCard: document.getElementById("btnFinishCard"),
+  btnManual: document.getElementById("btnManual"),
+  btnManualCard: document.getElementById("btnManualCard"),
+  manualDialog: document.getElementById("manualDialog"),
+  manualForm: document.getElementById("manualForm"),
+  manualRef: document.getElementById("manualRef"),
+  manualLote: document.getElementById("manualLote"),
+  manualSublote: document.getElementById("manualSublote"),
+  btnManualCancel: document.getElementById("btnManualCancel"),
   btnExport: document.getElementById("btnExport"),
   btnExportCsv: document.getElementById("btnExportCsv"),
   btnReset: document.getElementById("btnReset"),
@@ -73,6 +83,10 @@ function renderTable(lines) {
   el.tbody.innerHTML = "";
   for (const l of lines) {
     const tr = document.createElement("tr");
+    if (l.manual) {
+      tr.classList.add("manual-row");
+      tr.title = "Registro introducido manualmente";
+    }
     tr.innerHTML = `
       <td class="mono">${escapeHtml(l.ubicacion)}</td>
       <td class="mono">${escapeHtml(l.ref)}</td>
@@ -143,6 +157,65 @@ async function closeCurrentLocation() {
   setMsg("Ubicación cerrada. Escanea la siguiente ubicación.", "warn");
 }
 
+async function storeItem({ ref, lote, sublote, manual = false }) {
+  if (!currentLoc) {
+    setMsg("No hay ubicación activa. Escanea ubicación primero.", "err");
+    setState(STATE.WAIT_LOC);
+    return;
+  }
+
+  const key = makeKey(currentLoc, ref, lote, sublote);
+  const existing = await findByKey(db, key);
+
+  if (sublote) {
+    if (existing.length > 0) {
+      setMsg(`DUPLICADO (con sublote) rechazado: ${ref} / ${lote ?? "-"} / ${sublote}`, "err");
+      return;
+    }
+    const line = {
+      id: uuid(),
+      key,
+      ubicacion: currentLoc,
+      ref,
+      lote: lote ?? null,
+      sublote: sublote ?? null,
+      cantidad: 1,
+      manual,
+      createdAt: Date.now(),
+    };
+    await putLine(db, line);
+    lastInsertedId = line.id;
+    setMsg(`OK: ${ref} (lote ${lote ?? "-"}) (sublote ${sublote})${manual ? " [manual]" : ""}`, "ok");
+    return;
+  }
+
+  if (existing.length > 0) {
+    const line = existing[0];
+    line.cantidad += 1;
+    line.createdAt = Date.now();
+    line.manual = Boolean(line.manual || manual);
+    await putLine(db, line);
+    lastInsertedId = line.id;
+    setMsg(`OK (agregado): ${ref} (lote ${lote ?? "-"}) → cantidad ${line.cantidad}${manual ? " [manual]" : ""}`, "ok");
+    return;
+  }
+
+  const line = {
+    id: uuid(),
+    key,
+    ubicacion: currentLoc,
+    ref,
+    lote: lote ?? null,
+    sublote: null,
+    cantidad: 1,
+    manual,
+    createdAt: Date.now(),
+  };
+  await putLine(db, line);
+  lastInsertedId = line.id;
+  setMsg(`OK: ${ref} (lote ${lote ?? "-"})${manual ? " [manual]" : ""}`, "ok");
+}
+
 async function registerItem(scanRaw) {
   const raw = norm(scanRaw);
   if (!raw) return;
@@ -173,55 +246,35 @@ async function registerItem(scanRaw) {
     sublote = null;
   }
 
-  const key = makeKey(currentLoc, ref, lote, sublote);
-  const existing = await findByKey(db, key);
+  return storeItem({ ref, lote, sublote, manual: false });
+}
 
-  // Si hay sublote: no permitimos duplicados
-  if (sublote) {
-    if (existing.length > 0) {
-      setMsg(`DUPLICADO (con sublote) rechazado: ${ref} / ${lote ?? "-"} / ${sublote}`, "err");
-      return;
-    }
-    const line = {
-      id: uuid(),
-      key,
-      ubicacion: currentLoc,
-      ref,
-      lote: lote ?? null,
-      sublote: sublote ?? null,
-      cantidad: 1,
-      createdAt: Date.now(),
-    };
-    await putLine(db, line);
-    lastInsertedId = line.id;
-    setMsg(`OK: ${ref} (lote ${lote ?? "-"}) (sublote ${sublote})`, "ok");
+function openManualDialog() {
+  if (!currentLoc) {
+    setMsg("Primero debes fijar una ubicación para el alta manual.", "warn");
+    return;
+  }
+  el.manualRef.value = "";
+  el.manualLote.value = "";
+  el.manualSublote.value = "";
+  el.manualDialog?.showModal?.();
+  el.manualRef?.focus?.();
+}
+
+async function submitManualForm(evt) {
+  evt.preventDefault();
+  const ref = norm(el.manualRef?.value);
+  const lote = norm(el.manualLote?.value) || null;
+  const sublote = norm(el.manualSublote?.value) || null;
+
+  if (!ref) {
+    setMsg("Referencia obligatoria en alta manual.", "err");
     return;
   }
 
-  // Sin sublote: agregamos cantidad
-  if (existing.length > 0) {
-    const line = existing[0];
-    line.cantidad += 1;
-    line.createdAt = Date.now();
-    await putLine(db, line);
-    lastInsertedId = line.id;
-    setMsg(`OK (agregado): ${ref} (lote ${lote ?? "-"}) → cantidad ${line.cantidad}`, "ok");
-    return;
-  }
-
-  const line = {
-    id: uuid(),
-    key,
-    ubicacion: currentLoc,
-    ref,
-    lote: lote ?? null,
-    sublote: null,
-    cantidad: 1,
-    createdAt: Date.now(),
-  };
-  await putLine(db, line);
-  lastInsertedId = line.id;
-  setMsg(`OK: ${ref} (lote ${lote ?? "-"})`, "ok");
+  await storeItem({ ref, lote, sublote, manual: true });
+  el.manualDialog?.close?.();
+  await refresh();
 }
 
 function handleScan(raw) {
@@ -382,10 +435,27 @@ async function main() {
     await closeCurrentLocation();
     await refresh();
   });
+  safeOn(el.btnNextLocCard, "click", async () => {
+    await closeCurrentLocation();
+    await refresh();
+  });
   safeOn(el.btnFinish, "click", async () => {
     await finishInventory();
     await refresh();
   });
+  safeOn(el.btnFinishCard, "click", async () => {
+    await finishInventory();
+    await refresh();
+  });
+  safeOn(el.btnManual, "click", () => openManualDialog());
+  safeOn(el.btnManualCard, "click", () => openManualDialog());
+  safeOn(el.manualForm, "submit", (evt) => {
+    submitManualForm(evt).catch((e) => {
+      console.error(e);
+      setMsg("ERROR: " + (e?.message || e), "err");
+    });
+  });
+  safeOn(el.btnManualCancel, "click", () => el.manualDialog?.close?.());
   safeOn(el.btnExport, "click", async () => { await doExport(); });
   safeOn(el.btnExportCsv, "click", async () => { await doExportCsv(); });
   safeOn(el.btnReset, "click", async () => { await doReset(); });

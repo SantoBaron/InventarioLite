@@ -16,6 +16,7 @@
       <div class="actions">
         <button id="btnNextLoc" class="secondary">Siguiente ubicación</button>
         <button id="btnFinish" class="secondary">Finalizar</button>
+        <button id="btnManual" class="secondary">Alta manual</button>
         <button id="btnUndo" class="secondary" title="Deshacer último registro">Undo</button>
         <button id="btnExport" class="secondary">Exportar Excel</button>
         <button id="btnExportCsv" class="secondary">Exportar CSV</button>
@@ -42,6 +43,11 @@
           </div>
         </div>
         <div id="msg" class="msg"></div>
+        <div class="quick-actions">
+          <button id="btnNextLocCard" class="secondary">Siguiente ubicación</button>
+          <button id="btnFinishCard" class="secondary">Finalizar</button>
+          <button id="btnManualCard" class="secondary">Alta manual</button>
+        </div>
       </div>
 
       <!-- Input invisible: el escáner escribe aquí -->
@@ -71,6 +77,25 @@
       </div>
     </section>
   </main>
+
+  <dialog id="manualDialog" class="manual-dialog">
+    <form id="manualForm" method="dialog" class="manual-form">
+      <h3>Alta manual de artículo</h3>
+      <label>Referencia
+        <input id="manualRef" required autocomplete="off" />
+      </label>
+      <label>Lote
+        <input id="manualLote" autocomplete="off" />
+      </label>
+      <label>Sublote
+        <input id="manualSublote" autocomplete="off" />
+      </label>
+      <menu>
+        <button value="cancel" class="secondary" type="button" id="btnManualCancel">Cancelar</button>
+        <button value="default" type="submit">Guardar manual</button>
+      </menu>
+    </form>
+  </dialog>
 
   <!-- SheetJS para exportar .xlsx -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
