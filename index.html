@@ -11,11 +11,14 @@
     <header class="top">
       <div>
         <h1>Inventario</h1>
-        <p class="muted">Escanea ubicación → escanea artículos → cambia ubicación… Escanea <b>FIN</b> para cerrar.</p>
+        <p class="muted">Escanea ubicación → escanea artículos → pulsa <b>Siguiente ubicación</b> (o escanea <b>SIGUIENTE</b>) para pasar a otra ubicación. Pulsa <b>Finalizar</b> (o escanea <b>FIN</b>) para cerrar.</p>
       </div>
       <div class="actions">
+        <button id="btnNextLoc" class="secondary">Siguiente ubicación</button>
+        <button id="btnFinish" class="secondary">Finalizar</button>
         <button id="btnUndo" class="secondary" title="Deshacer último registro">Undo</button>
         <button id="btnExport" class="secondary">Exportar Excel</button>
+        <button id="btnExportCsv" class="secondary">Exportar CSV</button>
         <button id="btnReset" class="danger">Reset</button>
       </div>
     </header>
