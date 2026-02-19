@@ -616,7 +616,11 @@ function hookScannerInput() {
     if (!active) return false;
 
     if (active === el.scanInput) return false;
-    if (active.closest?.("dialog[open]")) return true;
+
+    const ownerDialog = active.closest?.("dialog");
+    if (ownerDialog?.open) return true;
+    if (ownerDialog && !ownerDialog.open) return false;
+
     if (active.isContentEditable) return true;
 
     const tag = active.tagName?.toUpperCase?.() || "";
@@ -744,6 +748,9 @@ async function main() {
     manualMode = "create";
     editingLineId = null;
     el.manualDialog?.close?.();
+  });
+  safeOn(el.manualDialog, "close", () => {
+    el.scanInput?.focus?.({ preventScroll: true });
   });
   safeOn(el.btnExport, "click", async () => { await doExport(); });
   safeOn(el.btnExportCsv, "click", async () => { await doExportCsv(); });
