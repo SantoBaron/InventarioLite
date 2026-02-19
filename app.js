@@ -10,7 +10,7 @@ const STATE = {
 };
 
 const el = {
-  scanInput: document.getElementById("scanInput"), // puede no existir
+  scanInput: document.getElementById("scanInput"),
   stateText: document.getElementById("stateText"),
   locText: document.getElementById("locText"),
   lastText: document.getElementById("lastText"),
@@ -29,6 +29,9 @@ const el = {
   manualRef: document.getElementById("manualRef"),
   manualLote: document.getElementById("manualLote"),
   manualSublote: document.getElementById("manualSublote"),
+  manualQty: document.getElementById("manualQty"),
+  manualPrint: document.getElementById("manualPrint"),
+  manualHint: document.getElementById("manualHint"),
   btnManualCancel: document.getElementById("btnManualCancel"),
   btnExport: document.getElementById("btnExport"),
   btnExportCsv: document.getElementById("btnExportCsv"),
@@ -39,6 +42,9 @@ let db;
 let appState = STATE.WAIT_LOC;
 let currentLoc = null;
 let lastInsertedId = null;
+let currentLines = [];
+let manualMode = "create"; // create | edit
+let editingLineId = null;
 
 function uuid() {
   return crypto.randomUUID
@@ -82,33 +88,6 @@ function escapeHtml(s) {
     .replaceAll("'", "&#039;");
 }
 
-function renderTable(lines) {
-  if (!el.tbody) return;
-  el.tbody.innerHTML = "";
-  for (const l of lines) {
-    const tr = document.createElement("tr");
-    if (l.manual) {
-      tr.classList.add("manual-row");
-      tr.title = "Registro introducido manualmente";
-    }
-    tr.innerHTML = `
-      <td class="mono">${escapeHtml(l.ubicacion)}</td>
-      <td class="mono">${escapeHtml(l.ref)}</td>
-      <td class="mono">${escapeHtml(l.lote ?? "")}</td>
-      <td class="mono">${escapeHtml(l.sublote ?? "")}</td>
-      <td class="num mono">${l.cantidad}</td>
-    `;
-    el.tbody.appendChild(tr);
-  }
-  if (el.countText) el.countText.textContent = String(lines.length);
-}
-
-async function refresh() {
-  if (!db) return;
-  const lines = await getAllLines(db);
-  renderTable(lines);
-}
-
 function makeKey(ubicacion, ref, lote, sublote) {
   const u = norm(ubicacion).toUpperCase();
   const r = norm(ref).toUpperCase();
@@ -117,7 +96,45 @@ function makeKey(ubicacion, ref, lote, sublote) {
   return `${u}|${r}|${l}|${sl}`;
 }
 
-// --- Comandos (opcionales) ---
+function findLineById(id) {
+  return currentLines.find((l) => l.id === id) || null;
+}
+
+function renderTable(lines) {
+  if (!el.tbody) return;
+  el.tbody.innerHTML = "";
+
+  for (const l of lines) {
+    const tr = document.createElement("tr");
+    if (l.manual) {
+      tr.classList.add("manual-row");
+      tr.title = "Registro introducido manualmente";
+    }
+
+    tr.innerHTML = `
+      <td class="mono">${escapeHtml(l.ubicacion)}</td>
+      <td class="mono">${escapeHtml(l.ref)}</td>
+      <td class="mono">${escapeHtml(l.lote ?? "")}</td>
+      <td class="mono">${escapeHtml(l.sublote ?? "")}</td>
+      <td class="num mono">${l.cantidad}</td>
+      <td class="actions-cell">
+        <button class="mini secondary" data-action="edit" data-id="${escapeHtml(l.id)}">Editar</button>
+        <button class="mini warn" data-action="label" data-id="${escapeHtml(l.id)}">Etiqueta</button>
+        <button class="mini danger" data-action="delete" data-id="${escapeHtml(l.id)}">Borrar</button>
+      </td>
+    `;
+    el.tbody.appendChild(tr);
+  }
+
+  if (el.countText) el.countText.textContent = String(lines.length);
+}
+
+async function refresh() {
+  if (!db) return;
+  currentLines = await getAllLines(db);
+  renderTable(currentLines);
+}
+
 function parseCommand(raw) {
   const s = norm(raw).toUpperCase();
   if (s === "FIN" || s === "FIN DE INVENTARIO") return { cmd: "FIN" };
@@ -126,13 +143,28 @@ function parseCommand(raw) {
   return null;
 }
 
-// --- Limpieza de entrada: quita DEMO si viene como prefijo ---
 function stripDemoPrefix(raw) {
   let s = (raw ?? "").trim();
   const up = s.toUpperCase();
   if (up === "DEMO") return "";
   if (up.startsWith("DEMO")) s = s.slice(4).trim();
   return s;
+}
+
+function buildGs1Payload({ ref, lote, sublote }) {
+  const parts = [`02${norm(ref)}`];
+  if (norm(lote)) parts.push(`10${norm(lote)}`);
+  if (norm(sublote)) parts.push(`04${norm(sublote)}`);
+  parts.push("21");
+  return parts.join(String.fromCharCode(29));
+}
+
+function buildGs1Human({ ref, lote, sublote }) {
+  const parts = [`02${norm(ref)}`];
+  if (norm(lote)) parts.push(`10${norm(lote)}`);
+  if (norm(sublote)) parts.push(`04${norm(sublote)}`);
+  parts.push("21");
+  return parts.join("Ê");
 }
 
 async function registerLocation(locRaw) {
@@ -169,11 +201,11 @@ async function closeCurrentLocation() {
   setMsg("Ubicación cerrada. Escanea la siguiente ubicación.", "warn");
 }
 
-async function storeItem({ ref, lote, sublote, manual = false }) {
+async function storeItem({ ref, lote, sublote, manual = false, cantidad = 1 }) {
   if (!currentLoc) {
     setMsg("No hay ubicación activa. Escanea ubicación primero.", "err");
     setState(STATE.WAIT_LOC);
-    return;
+    return null;
   }
 
   const key = makeKey(currentLoc, ref, lote, sublote);
@@ -182,7 +214,7 @@ async function storeItem({ ref, lote, sublote, manual = false }) {
   if (sublote) {
     if (existing.length > 0) {
       setMsg(`DUPLICADO (con sublote) rechazado: ${ref} / ${lote ?? "-"} / ${sublote}`, "err");
-      return;
+      return null;
     }
     const line = {
       id: uuid(),
@@ -191,25 +223,25 @@ async function storeItem({ ref, lote, sublote, manual = false }) {
       ref,
       lote: lote ?? null,
       sublote: sublote ?? null,
-      cantidad: 1,
+      cantidad,
       manual,
       createdAt: Date.now(),
     };
     await putLine(db, line);
     lastInsertedId = line.id;
     setMsg(`OK: ${ref} (lote ${lote ?? "-"}) (sublote ${sublote})${manual ? " [manual]" : ""}`, "ok");
-    return;
+    return line;
   }
 
   if (existing.length > 0) {
     const line = existing[0];
-    line.cantidad += 1;
+    line.cantidad += cantidad;
     line.createdAt = Date.now();
     line.manual = Boolean(line.manual || manual);
     await putLine(db, line);
     lastInsertedId = line.id;
     setMsg(`OK (agregado): ${ref} (lote ${lote ?? "-"}) → cantidad ${line.cantidad}${manual ? " [manual]" : ""}`, "ok");
-    return;
+    return line;
   }
 
   const line = {
@@ -219,13 +251,14 @@ async function storeItem({ ref, lote, sublote, manual = false }) {
     ref,
     lote: lote ?? null,
     sublote: null,
-    cantidad: 1,
+    cantidad,
     manual,
     createdAt: Date.now(),
   };
   await putLine(db, line);
   lastInsertedId = line.id;
   setMsg(`OK: ${ref} (lote ${lote ?? "-"})${manual ? " [manual]" : ""}`, "ok");
+  return line;
 }
 
 async function registerItem(scanRaw) {
@@ -243,8 +276,9 @@ async function registerItem(scanRaw) {
     return;
   }
 
-  // Parseo GS1 (custom)
-  let ref, lote, sublote;
+  let ref;
+  let lote;
+  let sublote;
   const gs1 = parseGs1(raw);
 
   if (gs1) {
@@ -252,7 +286,6 @@ async function registerItem(scanRaw) {
     lote = gs1.lote;
     sublote = gs1.sublote;
   } else {
-    // si no parsea, registramos el raw completo como REF (tal como pediste)
     ref = raw;
     lote = null;
     sublote = null;
@@ -261,10 +294,17 @@ async function registerItem(scanRaw) {
   return storeItem({ ref, lote, sublote, manual: false });
 }
 
-function openManualDialog() {
+function openManualDialogForCreate() {
   if (!currentLoc) {
     setMsg("Primero debes fijar una ubicación para el alta manual.", "warn");
     return;
+  }
+
+  manualMode = "create";
+  editingLineId = null;
+
+  if (el.manualHint) {
+    el.manualHint.textContent = "Usa esta opción cuando el código GS1 no se haya podido leer.";
   }
 
   if (!el.manualDialog?.showModal) {
@@ -284,8 +324,75 @@ function openManualDialog() {
   el.manualRef.value = "";
   el.manualLote.value = "";
   el.manualSublote.value = "";
+  if (el.manualQty) el.manualQty.value = "1";
+  if (el.manualPrint) el.manualPrint.checked = true;
   el.manualDialog?.showModal?.();
   el.manualRef?.focus?.();
+}
+
+function openManualDialogForEdit(line) {
+  manualMode = "edit";
+  editingLineId = line.id;
+
+  if (el.manualHint) {
+    el.manualHint.textContent = "Modifica la línea y guarda los cambios.";
+  }
+
+  el.manualRef.value = line.ref ?? "";
+  el.manualLote.value = line.lote ?? "";
+  el.manualSublote.value = line.sublote ?? "";
+  if (el.manualQty) el.manualQty.value = String(line.cantidad ?? 1);
+  if (el.manualPrint) el.manualPrint.checked = false;
+
+  el.manualDialog?.showModal?.();
+  el.manualRef?.focus?.();
+}
+
+async function upsertEditedLine(line, { ref, lote, sublote, cantidad }) {
+  const newKey = makeKey(line.ubicacion, ref, lote, sublote);
+  const sameKey = newKey === line.key;
+
+  if (sameKey) {
+    line.ref = ref;
+    line.lote = lote;
+    line.sublote = sublote;
+    line.cantidad = cantidad;
+    line.key = newKey;
+    line.manual = true;
+    line.createdAt = Date.now();
+    await putLine(db, line);
+    setMsg("Línea actualizada correctamente.", "ok");
+    return line;
+  }
+
+  const matches = await findByKey(db, newKey);
+  const conflict = matches.find((x) => x.id !== line.id);
+
+  if (conflict && sublote) {
+    setMsg("No se puede guardar: ya existe otra línea con el mismo REF/LOTE/SUBLOTE.", "err");
+    return null;
+  }
+
+  if (conflict && !sublote) {
+    conflict.cantidad += cantidad;
+    conflict.manual = true;
+    conflict.createdAt = Date.now();
+    await putLine(db, conflict);
+    await deleteLine(db, line.id);
+    setMsg("Línea combinada con una existente al modificar.", "warn");
+    return conflict;
+  }
+
+  line.ref = ref;
+  line.lote = lote;
+  line.sublote = sublote;
+  line.cantidad = cantidad;
+  line.key = newKey;
+  line.manual = true;
+  line.createdAt = Date.now();
+  await putLine(db, line);
+  setMsg("Línea modificada correctamente.", "ok");
+  return line;
 }
 
 async function submitManualForm(evt) {
@@ -293,15 +400,112 @@ async function submitManualForm(evt) {
   const ref = norm(el.manualRef?.value);
   const lote = norm(el.manualLote?.value) || null;
   const sublote = norm(el.manualSublote?.value) || null;
+  const cantidad = Math.max(1, Number.parseInt(el.manualQty?.value || "1", 10) || 1);
 
   if (!ref) {
     setMsg("Referencia obligatoria en alta manual.", "err");
     return;
   }
 
-  await storeItem({ ref, lote, sublote, manual: true });
+  let affectedLine = null;
+
+  if (manualMode === "edit" && editingLineId) {
+    const originalLine = findLineById(editingLineId);
+    if (!originalLine) {
+      setMsg("No se encontró la línea a modificar. Recarga e inténtalo de nuevo.", "err");
+      return;
+    }
+    affectedLine = await upsertEditedLine(originalLine, { ref, lote, sublote, cantidad });
+  } else {
+    affectedLine = await storeItem({ ref, lote, sublote, manual: true, cantidad });
+  }
+
+  if (!affectedLine) return;
+
   el.manualDialog?.close?.();
   await refresh();
+
+  if (manualMode === "create" && el.manualPrint?.checked) {
+    printLineLabel(affectedLine);
+  }
+
+  manualMode = "create";
+  editingLineId = null;
+}
+
+function printLineLabel(line) {
+  const ref = norm(line.ref);
+  const lote = norm(line.lote || "");
+  const sublote = norm(line.sublote || "");
+  const gs1Human = buildGs1Human({ ref, lote, sublote });
+  const gs1Payload = buildGs1Payload({ ref, lote, sublote });
+
+  const popup = window.open("", "_blank", "width=860,height=620");
+  if (!popup) {
+    setMsg("No se pudo abrir la ventana de impresión (bloqueador de popups).", "warn");
+    return;
+  }
+
+  const html = `<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <title>Etiqueta - ${escapeHtml(ref)}</title>
+  <style>
+    body { font-family: Arial, Helvetica, sans-serif; margin: 18px; color: #111; }
+    .label { width: 740px; border: 1px solid #bbb; border-radius: 8px; padding: 16px; }
+    .top { display: grid; grid-template-columns: 1fr 180px; gap: 14px; align-items: start; }
+    .title { font-size: 32px; margin: 0 0 10px; letter-spacing: .5px; }
+    .line { font-size: 22px; margin: 4px 0; }
+    .code { margin-top: 12px; font-size: 17px; letter-spacing: .3px; }
+    .meta { margin-top: 14px; border-collapse: collapse; width: 100%; }
+    .meta td { border: 1px solid #ccc; padding: 7px 8px; font-size: 15px; }
+    .muted { color: #555; }
+    .tools { margin-bottom: 12px; }
+    @media print { .tools { display: none; } body { margin: 0; } .label { border: none; width: auto; } }
+  </style>
+</head>
+<body>
+  <div class="tools">
+    <button onclick="window.print()">Imprimir etiqueta</button>
+  </div>
+  <div class="label">
+    <div class="top">
+      <div>
+        <h1 class="title">${escapeHtml(ref)}</h1>
+        <p class="line">Lote: <b>${escapeHtml(lote || "-")}</b></p>
+        <p class="line">Sublote: <b>${escapeHtml(sublote || "-")}</b></p>
+        <p class="code">${escapeHtml(gs1Human)}</p>
+      </div>
+      <canvas id="dm" width="180" height="180" aria-label="Data Matrix"></canvas>
+    </div>
+    <table class="meta">
+      <tr><td class="muted">Ubicación</td><td>${escapeHtml(line.ubicacion || "-")}</td><td class="muted">Cantidad</td><td>${escapeHtml(String(line.cantidad || 1))}</td></tr>
+      <tr><td class="muted">Origen</td><td>${line.manual ? "Manual" : "Escáner"}</td><td class="muted">Fecha</td><td>${new Date().toLocaleString("es-ES")}</td></tr>
+    </table>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bwip-js@4.5.0/dist/bwip-js-min.js"></script>
+  <script>
+    (function render(){
+      const text = ${JSON.stringify(gs1Payload)};
+      if (!window.bwipjs) return;
+      bwipjs.toCanvas(document.getElementById('dm'), {
+        bcid: 'datamatrix',
+        text,
+        gs1: true,
+        scale: 4,
+        parsefnc: true,
+        includetext: false,
+      });
+    })();
+  </script>
+</body>
+</html>`;
+
+  popup.document.open();
+  popup.document.write(html);
+  popup.document.close();
 }
 
 function handleScan(raw) {
@@ -312,6 +516,8 @@ function handleScan(raw) {
 
   const cmd = parseCommand(raw);
   if (cmd?.cmd === "FIN") return finishInventory();
+  if (cmd?.cmd === "NEXT_LOC") return closeCurrentLocation();
+  if (cmd?.cmd === "LOC") return registerLocation(cmd.loc);
 
   if (appState === STATE.FINISHED) {
     setState(STATE.WAIT_LOC);
@@ -364,10 +570,58 @@ async function doReset() {
   await refresh();
 }
 
-// --- Captura global de teclado (NO depende de foco) ---
+async function handleRowAction(evt) {
+  const btn = evt.target.closest("button[data-action]");
+  if (!btn) return;
+
+  const action = btn.dataset.action;
+  const id = btn.dataset.id;
+  const line = findLineById(id);
+
+  if (!line) {
+    setMsg("No se encontró la línea seleccionada.", "err");
+    return;
+  }
+
+  if (action === "delete") {
+    await deleteLine(db, line.id);
+    if (lastInsertedId === line.id) lastInsertedId = null;
+    setMsg("Línea eliminada.", "warn");
+    await refresh();
+    return;
+  }
+
+  if (action === "edit") {
+    if (!el.manualDialog?.showModal) {
+      setMsg("Tu navegador no soporta edición con diálogo. Usa uno actualizado.", "warn");
+      return;
+    }
+    openManualDialogForEdit(line);
+    return;
+  }
+
+  if (action === "label") {
+    printLineLabel(line);
+  }
+}
+
 function hookScannerInput() {
   let buffer = "";
   let timer = null;
+
+  function shouldIgnoreScannerCapture(evtTarget) {
+    if (el.manualDialog?.open) return true;
+
+    const active = evtTarget || document.activeElement;
+    if (!active) return false;
+
+    if (active === el.scanInput) return false;
+    if (active.closest?.("dialog[open]")) return true;
+    if (active.isContentEditable) return true;
+
+    const tag = active.tagName?.toUpperCase?.() || "";
+    return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+  }
 
   function scheduleFlushByState() {
     if (appState === STATE.FINISHED) return;
@@ -376,7 +630,6 @@ function hookScannerInput() {
 
     clearTimeout(timer);
     timer = setTimeout(() => {
-      // Si el lector no manda Enter/Tab, cerramos lectura por tiempo
       if (buffer.trim()) flush();
     }, timeoutMs);
   }
@@ -400,8 +653,8 @@ function hookScannerInput() {
 
   document.addEventListener("keydown", (e) => {
     if (e.ctrlKey || e.altKey || e.metaKey) return;
+    if (shouldIgnoreScannerCapture(e.target)) return;
 
-    // Terminadores clásicos del escáner
     if (e.key === "Enter" || e.key === "Tab") {
       e.preventDefault();
       flush();
@@ -420,9 +673,8 @@ function hookScannerInput() {
     }
   });
 
-  // Algunos escáneres actúan como "teclado wedge" y escriben en el input
-  // sin exponer bien todos los keydown. Este listener cubre ese caso.
   safeOn(el.scanInput, "input", () => {
+    if (shouldIgnoreScannerCapture(el.scanInput)) return;
     const v = el.scanInput?.value ?? "";
     if (!v) return;
     buffer = v;
@@ -430,19 +682,19 @@ function hookScannerInput() {
   });
 
   safeOn(el.scanInput, "paste", () => {
+    if (shouldIgnoreScannerCapture(el.scanInput)) return;
     const v = el.scanInput?.value ?? "";
     if (!v) return;
     buffer = v;
     scheduleFlushByState();
   });
 
-  // Compatibilidad (no crítico)
   el.scanInput?.focus?.({ preventScroll: true });
   safeOn(document, "click", () => el.scanInput?.focus?.({ preventScroll: true }));
   safeOn(window, "focus", () => el.scanInput?.focus?.({ preventScroll: true }));
 }
+
 async function main() {
-  // Reporta errores sin matar la app
   window.addEventListener("error", (e) => {
     const msg = e?.error?.message || e?.message || String(e);
     console.error(e);
@@ -481,17 +733,27 @@ async function main() {
       setMsg("ERROR: " + (e?.message || e), "err");
     });
   });
-  safeOnMany([el.btnManual, el.btnManualCard], "click", () => openManualDialog());
+  safeOnMany([el.btnManual, el.btnManualCard], "click", () => openManualDialogForCreate());
   safeOn(el.manualForm, "submit", (evt) => {
     submitManualForm(evt).catch((e) => {
       console.error(e);
       setMsg("ERROR: " + (e?.message || e), "err");
     });
   });
-  safeOn(el.btnManualCancel, "click", () => el.manualDialog?.close?.());
+  safeOn(el.btnManualCancel, "click", () => {
+    manualMode = "create";
+    editingLineId = null;
+    el.manualDialog?.close?.();
+  });
   safeOn(el.btnExport, "click", async () => { await doExport(); });
   safeOn(el.btnExportCsv, "click", async () => { await doExportCsv(); });
   safeOn(el.btnReset, "click", async () => { await doReset(); });
+  safeOn(el.tbody, "click", (evt) => {
+    handleRowAction(evt).catch((e) => {
+      console.error(e);
+      setMsg("ERROR: " + (e?.message || e), "err");
+    });
+  });
 
   setState(STATE.WAIT_LOC);
   setMsg("Listo. Escanea una UBICACIÓN.", "ok");
