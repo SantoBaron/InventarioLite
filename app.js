@@ -227,6 +227,9 @@ function stripDemoPrefix(raw) {
 }
 
 function handleScan(raw) {
+  console.log("RAW:", raw);
+  console.log("CODES:", [...raw].map(c => `U+${c.codePointAt(0).toString(16).toUpperCase().padStart(4,"0")}`).join(" "));
+
   raw = (raw ?? "").trim();
 
   if (!raw) return;
@@ -368,4 +371,5 @@ main().catch((err) => {
   console.error(err);
   setMsg("Error inicializando la app: " + (err?.message || err), "err");
 });
+
 
