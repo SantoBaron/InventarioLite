@@ -14,9 +14,7 @@
         <p class="muted">Escanea ubicación → escanea artículos → pulsa <b>Siguiente ubicación</b> (o escanea <b>SIGUIENTE</b>) para pasar a otra ubicación. Pulsa <b>Finalizar</b> (o escanea <b>FIN</b>) para cerrar.</p>
       </div>
       <div class="actions">
-        <button id="btnNextLoc" class="secondary">Siguiente ubicación</button>
-        <button id="btnFinish" class="secondary">Finalizar</button>
-        <button id="btnManual" class="secondary">Alta manual</button>
+        <button id="btnModePda" class="secondary" title="Alternar lector integrado PDA">Modo PDA: OFF</button>
         <button id="btnUndo" class="secondary" title="Deshacer último registro">Undo</button>
         <button id="btnExport" class="secondary">Exportar Excel</button>
         <button id="btnExportCsv" class="secondary">Exportar CSV</button>
@@ -48,9 +46,20 @@
           <button id="btnFinishCard" class="secondary">Finalizar</button>
           <button id="btnManualCard" class="secondary">Alta manual</button>
         </div>
+        <details class="mobile-actions-menu">
+          <summary class="secondary">Acciones</summary>
+          <div class="mobile-actions-list">
+            <button id="btnMenuNext" class="secondary" type="button">Siguiente ubicación</button>
+            <button id="btnMenuFinish" class="secondary" type="button">Finalizar</button>
+            <button id="btnMenuManual" class="secondary" type="button">Alta manual</button>
+            <button id="btnMenuUndo" class="secondary" type="button">Undo</button>
+            <button id="btnMenuExport" class="secondary" type="button">Exportar Excel</button>
+            <button id="btnMenuExportCsv" class="secondary" type="button">Exportar CSV</button>
+            <button id="btnMenuReset" class="danger" type="button">Reset</button>
+          </div>
+        </details>
       </div>
 
-      <!-- Input invisible: el escáner escribe aquí -->
       <input id="scanInput" class="scan-input" autocomplete="off" autofocus />
 
     </section>
@@ -70,6 +79,7 @@
               <th>Lote</th>
               <th>Sublote</th>
               <th class="num">Cantidad</th>
+              <th>Acciones</th>
             </tr>
           </thead>
           <tbody id="tbody"></tbody>
@@ -80,7 +90,8 @@
 
   <dialog id="manualDialog" class="manual-dialog">
     <form id="manualForm" method="dialog" class="manual-form">
-      <h3>Alta manual de artículo</h3>
+      <h3>Alta/edición manual de artículo</h3>
+      <p id="manualHint" class="muted compact">Usa esta opción cuando el código GS1 no se haya podido leer.</p>
       <label>Referencia
         <input id="manualRef" required autocomplete="off" />
       </label>
@@ -90,6 +101,13 @@
       <label>Sublote
         <input id="manualSublote" autocomplete="off" />
       </label>
+      <label>Cantidad
+        <input id="manualQty" type="number" min="1" step="1" value="1" />
+      </label>
+      <label class="checkbox-label">
+        <input id="manualPrint" type="checkbox" checked />
+        Imprimir etiqueta al guardar
+      </label>
       <menu>
         <button value="cancel" class="secondary" type="button" id="btnManualCancel">Cancelar</button>
         <button value="default" type="submit">Guardar manual</button>
@@ -97,10 +115,8 @@
     </form>
   </dialog>
 
-  <!-- SheetJS para exportar .xlsx -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
   <script type="module" src="./app.js"></script>
 </body>
 </html>
-
