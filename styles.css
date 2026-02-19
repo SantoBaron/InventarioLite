@@ -10,6 +10,8 @@ h2 { margin: 0; font-size: 16px; }
 button { border: 1px solid #2a3550; background: #141b2b; color: #e8eefc; padding: 10px 12px; border-radius: 10px; cursor: pointer; }
 button:hover { background: #18213a; }
 button.secondary { background: #101826; }
+button.secondary.active { border-color: #2e6b4a; background: #123222; }
+button.secondary.active:hover { background: #18452f; }
 button.warn { border-color: #6b592a; background: #2d2412; }
 button.warn:hover { background: #3c2e16; }
 button.danger { border-color: #6b2a2a; background: #2a1414; }

@@ -17,6 +17,7 @@ const el = {
   countText: document.getElementById("countText"),
   msg: document.getElementById("msg"),
   tbody: document.getElementById("tbody"),
+  btnModePda: document.getElementById("btnModePda"),
   btnUndo: document.getElementById("btnUndo"),
   btnNextLoc: document.getElementById("btnNextLoc"),
   btnNextLocCard: document.getElementById("btnNextLocCard"),
@@ -45,6 +46,7 @@ let lastInsertedId = null;
 let currentLines = [];
 let manualMode = "create"; // create | edit
 let editingLineId = null;
+let pdaMode = false;
 
 function uuid() {
   return crypto.randomUUID
@@ -150,6 +152,27 @@ function stripDemoPrefix(raw) {
   if (up.startsWith("DEMO")) s = s.slice(4).trim();
   return s;
 }
+
+function normalizeScannerRaw(raw) {
+  let s = String(raw ?? "");
+
+  if (pdaMode) {
+    // Algunos lectores PDA convierten separadores GS1 en carácter de reemplazo (�)
+    s = s.replaceAll("\uFFFD", "Ê");
+    s = s.replace(/[\x00-\x1F]/g, "Ê");
+    s = s.replace(/Ê+/g, "Ê");
+  }
+
+  return s;
+}
+
+function updatePdaModeUi() {
+
+  if (!el.btnModePda) return;
+  el.btnModePda.textContent = `Modo PDA: ${pdaMode ? "ON" : "OFF"}`;
+  el.btnModePda.classList.toggle("active", pdaMode);
+}
+
 
 function buildGs1Payload({ ref, lote, sublote }) {
   const parts = [`02${norm(ref)}`];
@@ -509,6 +532,7 @@ function printLineLabel(line) {
 }
 
 function handleScan(raw) {
+  raw = normalizeScannerRaw(raw);
   raw = stripDemoPrefix(raw);
   if (!raw) return;
 
@@ -714,6 +738,11 @@ async function main() {
   hookScannerInput();
 
   safeOn(el.btnUndo, "click", async () => { await undoLast(); });
+  safeOn(el.btnModePda, "click", () => {
+    pdaMode = !pdaMode;
+    updatePdaModeUi();
+    setMsg(`Modo lector activo: ${pdaMode ? "PDA integrado" : "Pistola/teclado"}.`, "ok");
+  });
 
   const onNextLoc = async () => {
     await closeCurrentLocation();
@@ -762,6 +791,7 @@ async function main() {
     });
   });
 
+  updatePdaModeUi();
   setState(STATE.WAIT_LOC);
   setMsg("Listo. Escanea una UBICACIÓN.", "ok");
   await refresh();
